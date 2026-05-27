@@ -6,6 +6,10 @@ import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import Settings from './pages/Settings';
 import Leads from './pages/Leads';
+import Tickets from './pages/Tickets';
+import MinhaArea from './pages/MinhaArea';
+import AdminPage from './pages/Admin';
+import ExecutivoDashboard from './pages/ExecutivoDashboard';
 import Login from './pages/Login';
 import { Bell, Search } from 'lucide-react';
 
@@ -13,13 +17,23 @@ const pageInfo = {
   '/': { title: 'Dashboard', subtitle: 'Visão geral da plataforma' },
   '/chat': { title: 'Chat em Tempo Real', subtitle: 'Conversas com a Helena IA' },
   '/leads': { title: 'Base de Leads', subtitle: 'Consulte os atendimentos e triagens realizadas' },
+  '/tickets': { title: 'Indicadores de Sucesso', subtitle: 'Performance de finalização dos atendimentos' },
+  '/minha-area': { title: 'Minha Área', subtitle: 'Gerencie os tickets da sua área' },
+  '/executivo': { title: 'Dashboard Executivo', subtitle: 'Indicadores operacionais e metas estratégicas do PTS' },
+  '/admin': { title: 'Gestão de Usuários', subtitle: 'Permissões e níveis de acesso' },
   '/settings': { title: 'Configurações', subtitle: 'Gerencie suas preferências' },
 };
 
 function AppLayout() {
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const currentPage = pageInfo[location.pathname] || pageInfo['/'];
+
+  // Redirect area users away from admin-only pages
+  const adminOnlyPaths = ['/', '/chat', '/leads', '/tickets', '/executivo', '/admin'];
+  if (!isAdmin && adminOnlyPaths.includes(location.pathname)) {
+    return <Navigate to="/minha-area" replace />;
+  }
 
   return (
     <div className="app-layout">
@@ -47,6 +61,10 @@ function AppLayout() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/chat" element={<Chat />} />
             <Route path="/leads" element={<Leads />} />
+            <Route path="/tickets" element={<Tickets />} />
+            <Route path="/minha-area" element={<MinhaArea />} />
+            <Route path="/executivo" element={<ExecutivoDashboard />} />
+            <Route path="/admin" element={<AdminPage />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>

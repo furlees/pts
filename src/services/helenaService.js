@@ -42,8 +42,109 @@ export async function updateLeadAcuracia(leadId, isCorrect, correctDepartment = 
 
 
 // =============================================
+// ATUALIZAÇÃO DO STATUS DO TICKET
+// =============================================
+export async function updateTicketStatus(leadId, status, justificativa = null) {
+  try {
+    const updatePayload = {
+      ticket_status: status,
+      ticket_justificativa: status === 'nao_concluido' ? justificativa : null,
+      ticket_updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await supabase
+      .from('dados_pts')
+      .update(updatePayload)
+      .eq('id', leadId)
+      .select();
+
+    if (error) throw error;
+    if (!data || data.length === 0) {
+      throw new Error("Permissão Negada: Nenhuma linha foi atualizada. Verifique o RLS (Row Level Security) da tabela dados_pts no Supabase.");
+    }
+
+    return { error: null, success: true };
+  } catch (err) {
+    console.error('[HelenaService] Erro ao atualizar ticket:', err);
+    return { error: err.message || 'Erro ao atualizar ticket.', success: false };
+  }
+}
+
+
+// =============================================
+// MÉTRICAS DE TICKETS DE FINALIZAÇÃO
+// =============================================
+export async function fetchTicketMetrics({ startDate, endDate } = {}) {
+  let query = supabase
+    .from('dados_pts')
+    .select('id, nome, empresa, departamento, ticket_status, ticket_justificativa, ticket_updated_at, created_at')
+    .order('created_at', { ascending: false });
+
+  query = applyDateFilter(query, 'created_at', startDate, endDate);
+
+  const { data, error } = await query;
+  if (error) {
+    console.error('[HelenaService] Erro fetchTicketMetrics:', error.message);
+    return { metrics: null, leads: [], error };
+  }
+
+  const leads = data || [];
+  const total = leads.length;
+  const concluidos    = leads.filter(l => l.ticket_status === 'concluido').length;
+  const naoConcluidos = leads.filter(l => l.ticket_status === 'nao_concluido').length;
+  const pendentes     = total - concluidos - naoConcluidos;
+
+  const pct = (n) => total > 0 ? parseFloat(((n / total) * 100).toFixed(1)) : 0;
+
+  // Breakdown por área
+  const areaMap = {};
+  leads.forEach(l => {
+    const area = l.departamento || 'Não definida';
+    if (!areaMap[area]) areaMap[area] = { area, concluidos: 0, naoConcluidos: 0, pendentes: 0, total: 0 };
+    areaMap[area].total++;
+    if (l.ticket_status === 'concluido')          areaMap[area].concluidos++;
+    else if (l.ticket_status === 'nao_concluido') areaMap[area].naoConcluidos++;
+    else                                           areaMap[area].pendentes++;
+  });
+  const porArea = Object.values(areaMap).sort((a, b) => b.total - a.total);
+
+  // Evolução diária (tickets finalizados)
+  const evolucaoMap = {};
+  leads.forEach(l => {
+    if (!l.ticket_updated_at) return;
+    const day = l.ticket_updated_at.slice(0, 10);
+    if (!evolucaoMap[day]) evolucaoMap[day] = { day, concluidos: 0, naoConcluidos: 0 };
+    if (l.ticket_status === 'concluido')          evolucaoMap[day].concluidos++;
+    else if (l.ticket_status === 'nao_concluido') evolucaoMap[day].naoConcluidos++;
+  });
+  const evolucaoDiaria = Object.values(evolucaoMap)
+    .sort((a, b) => a.day.localeCompare(b.day))
+    .slice(-30);
+
+  // Áreas únicas para filtro dropdown
+  const areasUnicas = [...new Set(leads.map(l => l.departamento).filter(Boolean))].sort();
+
+  return {
+    metrics: {
+      total, concluidos, naoConcluidos, pendentes,
+      pctConcluido: pct(concluidos),
+      pctNaoConcluido: pct(naoConcluidos),
+      pctPendente: pct(pendentes),
+    },
+    porArea,
+    evolucaoDiaria,
+    areasUnicas,
+    leads,
+    error: null,
+  };
+}
+
+
+
+// =============================================
 // TOTAL DE LEADS (dados_pts)
 // =============================================
+
 export async function fetchTotalLeads({ startDate, endDate } = {}) {
   let query = supabase
     .from('dados_pts')
@@ -283,7 +384,7 @@ export async function fetchAverageResponseTime({ startDate, endDate } = {}) {
 export async function fetchAllLeads({ startDate, endDate, limit = 500 } = {}) {
   let query = supabase
     .from('dados_pts')
-    .select('id, created_at, nome, empresa, telefone, email, cargo, departamento, motivo, resumo, transferencia_correta, departamento_correto')
+    .select('id, created_at, nome, empresa, telefone, email, cargo, departamento, motivo, resumo, transferencia_correta, departamento_correto, ticket_status, ticket_justificativa, ticket_updated_at')
     .order('created_at', { ascending: false })
     .limit(limit);
 

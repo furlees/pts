@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, ArrowUpRight, ArrowDownRight, MessageSquare, PhoneForwarded, Building2, TrendingUp, Activity, RotateCw, Calendar, Clock, CheckCircle, BarChart3, PieChart, Hash } from 'lucide-react';
+import { Users, ArrowUpRight, ArrowDownRight, MessageSquare, PhoneForwarded, Building2, TrendingUp, Activity, RotateCw, Calendar, Clock, CheckCircle, BarChart3, PieChart, Hash, XCircle, Ticket, ChevronRight } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart as RechartsPie, Pie, Cell } from 'recharts';
 import { useHelenaDataWithAutoRefresh } from '../hooks/useHelenaData';
+import { fetchTicketMetrics } from '../services/helenaService';
 
 const AREA_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#14b8a6'];
 
@@ -34,6 +35,14 @@ export default function Dashboard() {
   };
 
   const { data, recentActivity, loading, error, refetch } = useHelenaDataWithAutoRefresh(30000, processedDateRange);
+
+  // Ticket KPIs (lightweight)
+  const [ticketKpi, setTicketKpi] = useState(null);
+  useEffect(() => {
+    fetchTicketMetrics(processedDateRange).then(r => {
+      if (!r.error) setTicketKpi(r.metrics);
+    });
+  }, [dateRange.startDate, dateRange.endDate]);
 
   const stats = [
     { label: 'Leads Atendidos', value: data.leadsAtendidos.toString(), icon: MessageSquare, iconColor: 'green' },
@@ -126,6 +135,43 @@ export default function Dashboard() {
             </div>
           );
         })}
+      </div>
+
+      {/* ── Resumo de Tickets ───────────────────────────── */}
+      <div
+        style={{ display: 'flex', alignItems: 'stretch', gap: '0', background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-card)', overflow: 'hidden', marginBottom: '4px' }}
+      >
+        {/* Label */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '16px 20px', background: 'var(--color-accent)', color: '#fff', flexShrink: 0 }}>
+          <Ticket size={18} />
+          <span style={{ fontWeight: 700, fontSize: '0.85rem', whiteSpace: 'nowrap' }}>Tickets</span>
+        </div>
+
+        {/* Mini KPIs */}
+        {[
+          { label: 'Concluídos',     value: ticketKpi?.concluidos ?? '—',    pct: ticketKpi ? `${ticketKpi.pctConcluido}%` : '',   color: '#10b981' },
+          { label: 'Não Concluídos', value: ticketKpi?.naoConcluidos ?? '—', pct: ticketKpi ? `${ticketKpi.pctNaoConcluido}%` : '', color: '#ef4444' },
+          { label: 'Pendentes',      value: ticketKpi?.pendentes ?? '—',     pct: ticketKpi ? `${ticketKpi.pctPendente}%` : '',    color: '#f59e0b' },
+        ].map(item => (
+          <div key={item.label} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '12px', padding: '14px 20px', borderLeft: '1px solid var(--color-border)' }}>
+            <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: item.color, flexShrink: 0 }} />
+            <div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--color-text-primary)', lineHeight: 1.1 }}>{loading ? '...' : item.value}</div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>{item.label}{item.pct ? ` · ${item.pct}` : ''}</div>
+            </div>
+          </div>
+        ))}
+
+        {/* Link */}
+        <div style={{ display: 'flex', alignItems: 'center', padding: '0 20px', borderLeft: '1px solid var(--color-border)', flexShrink: 0 }}>
+          <button
+            id="dashboard-tickets-link"
+            onClick={() => navigate('/tickets')}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-accent)', cursor: 'pointer', whiteSpace: 'nowrap', background: 'transparent', border: 'none' }}
+          >
+            Ver indicadores <ChevronRight size={15} />
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '20px' }}>

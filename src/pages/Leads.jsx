@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useLeadsData } from '../hooks/useHelenaData';
-import { updateLeadAcuracia } from '../services/helenaService';
-import { Calendar, Search, Download, UserCircle, Building, Briefcase, Mail, Phone, ArrowRight, AlignLeft, User, MessageSquare, CheckCircle, XCircle, RotateCcw } from 'lucide-react';
+import { updateLeadAcuracia, updateTicketStatus } from '../services/helenaService';
+import { Calendar, Search, Download, UserCircle, Building, Briefcase, Mail, Phone, ArrowRight, AlignLeft, User, CheckCircle, XCircle, RotateCcw, Ticket, Clock, Pencil } from 'lucide-react';
 
 export default function Leads() {
   const location = useLocation();
@@ -54,6 +54,43 @@ export default function Leads() {
   const [acuraciaLocal, setAcuraciaLocal] = useState({});
   const [correctDeptText, setCorrectDeptText] = useState('');
   const [activeTabAcuracia, setActiveTabAcuracia] = useState(null); // 'correct' or 'incorrect'
+
+  // Ticket state
+  const [ticketLocal, setTicketLocal] = useState({}); // { [leadId]: { status, justificativa, updated_at } }
+  const [ticketMode, setTicketMode] = useState(null); // null | 'nao_concluido'
+  const [ticketJustificativa, setTicketJustificativa] = useState('');
+  const [ticketSaving, setTicketSaving] = useState(false);
+
+  const getTicketStatus = (lead) => {
+    if (ticketLocal[lead.id]) return ticketLocal[lead.id];
+    if (lead.ticket_status) return { status: lead.ticket_status, justificativa: lead.ticket_justificativa, updated_at: lead.ticket_updated_at };
+    return null;
+  };
+
+  const handleSaveTicket = async (leadId, status) => {
+    if (status === 'nao_concluido' && !ticketJustificativa.trim()) return;
+    setTicketSaving(true);
+    const justificativa = status === 'nao_concluido' ? ticketJustificativa.trim() : null;
+    const res = await updateTicketStatus(leadId, status, justificativa);
+    setTicketSaving(false);
+    if (res.error || !res.success) {
+      alert(`Erro ao salvar ticket.\n\nDetalhe: ${res.error}\n\nVerifique o RLS (Row Level Security) da tabela dados_pts no Supabase — é necessária uma política de UPDATE.`);
+      return;
+    }
+    setTicketLocal(prev => ({ ...prev, [leadId]: { status, justificativa, updated_at: new Date().toISOString() } }));
+    setTicketMode(null);
+    setTicketJustificativa('');
+    refetch();
+  };
+
+  const handleEditTicket = () => {
+    setTicketMode(null);
+    setTicketJustificativa('');
+    // Clear local cache so user can re-choose
+    if (selectedLead) {
+      setTicketLocal(prev => { const n = {...prev}; delete n[selectedLead.id]; return n; });
+    }
+  };
 
   const handleSaveAcuracia = async (leadId, isCorrect) => {
     let dept = null;
@@ -269,13 +306,20 @@ export default function Leads() {
                           </span>
                         </div>
                         
-                        {lead.departamento && (
-                          <div style={{ marginTop: '8px' }}>
+                        <div style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                          {lead.departamento && (
                             <span style={{ background: 'var(--color-warning)', color: '#000', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 600 }}>
                               {lead.departamento}
                             </span>
-                          </div>
-                        )}
+                          )}
+                          {(() => {
+                            const ts = getTicketStatus(lead);
+                            if (!ts) return <span className="ticket-badge pendente">● Pendente</span>;
+                            if (ts.status === 'concluido') return <span className="ticket-badge concluido">✓ Concluído</span>;
+                            if (ts.status === 'nao_concluido') return <span className="ticket-badge nao-concluido">✕ Não Concluído</span>;
+                            return null;
+                          })()}
+                        </div>
                       </div>
                     </div>
                   );
@@ -460,6 +504,124 @@ export default function Leads() {
                   </div>
                 </div>
               )}
+
+              {/* ===== SEÇÃO DE TICKET DE ATENDIMENTO ===== */}
+              <div className="ticket-section">
+                <div className="ticket-section-header">
+                  <h4 className="ticket-section-title">
+                    <Ticket size={18} color="var(--color-accent)" />
+                    Ticket de Atendimento
+                  </h4>
+                  {(() => {
+                    const ts = getTicketStatus(selectedLead);
+                    if (ts) {
+                      if (ts.status === 'concluido') return <span className="ticket-badge concluido">✓ Concluído</span>;
+                      if (ts.status === 'nao_concluido') return <span className="ticket-badge nao-concluido">✕ Não Concluído</span>;
+                    }
+                    return <span className="ticket-badge pendente">● Aguardando finalização</span>;
+                  })()}
+                </div>
+
+                {(() => {
+                  const ts = getTicketStatus(selectedLead);
+
+                  // --- STATUS JÁ DEFINIDO ---
+                  if (ts) {
+                    return (
+                      <>
+                        <div className="ticket-status-display" style={{ marginTop: '16px' }}>
+                          {ts.status === 'concluido' ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 18px', background: 'rgba(16,185,129,0.1)', borderRadius: 'var(--radius-md)', color: 'var(--color-success)', fontWeight: 600 }}>
+                              <CheckCircle size={18} />
+                              Ticket finalizado como Concluído
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 18px', background: 'rgba(239,68,68,0.1)', borderRadius: 'var(--radius-md)', color: 'var(--color-error)', fontWeight: 600 }}>
+                              <XCircle size={18} />
+                              Ticket finalizado como Não Concluído
+                            </div>
+                          )}
+                          <button className="ticket-btn edit" onClick={handleEditTicket}>
+                            <Pencil size={13} /> Editar
+                          </button>
+                        </div>
+
+                        {ts.status === 'nao_concluido' && ts.justificativa && (
+                          <div className="ticket-saved-justificativa">
+                            <strong>Justificativa</strong>
+                            {ts.justificativa}
+                          </div>
+                        )}
+
+                        {ts.updated_at && (
+                          <p className="ticket-updated-at">
+                            <Clock size={11} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
+                            Atualizado em: {new Date(ts.updated_at).toLocaleString('pt-BR')}
+                          </p>
+                        )}
+                      </>
+                    );
+                  }
+
+                  // --- AGUARDANDO AÇÃO ---
+                  return (
+                    <>
+                      <p className="ticket-section-subtitle">
+                        Registre o resultado final deste atendimento. A área responsável é <strong>{selectedLead.departamento || 'não definida'}</strong>.
+                      </p>
+                      <div className="ticket-actions">
+                        <button
+                          id={`ticket-concluido-${selectedLead.id}`}
+                          className="ticket-btn concluido"
+                          disabled={ticketSaving}
+                          onClick={() => handleSaveTicket(selectedLead.id, 'concluido')}
+                        >
+                          <CheckCircle size={17} />
+                          Concluído
+                        </button>
+                        <button
+                          id={`ticket-nao-concluido-${selectedLead.id}`}
+                          className="ticket-btn nao-concluido"
+                          disabled={ticketSaving}
+                          onClick={() => setTicketMode(ticketMode === 'nao_concluido' ? null : 'nao_concluido')}
+                        >
+                          <XCircle size={17} />
+                          Não Concluído
+                        </button>
+                      </div>
+
+                      {ticketMode === 'nao_concluido' && (
+                        <div className="ticket-justificativa-box">
+                          <textarea
+                            id={`ticket-justificativa-${selectedLead.id}`}
+                            placeholder="Descreva o motivo de não conclusão deste atendimento... (obrigatório)"
+                            value={ticketJustificativa}
+                            onChange={(e) => setTicketJustificativa(e.target.value)}
+                            autoFocus
+                          />
+                          <div className="ticket-justificativa-footer">
+                            <button
+                              className="ticket-btn edit"
+                              onClick={() => { setTicketMode(null); setTicketJustificativa(''); }}
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              id={`ticket-salvar-${selectedLead.id}`}
+                              className="ticket-btn concluido"
+                              style={{ background: 'var(--color-error)', opacity: ticketJustificativa.trim() ? 1 : 0.5 }}
+                              disabled={!ticketJustificativa.trim() || ticketSaving}
+                              onClick={() => handleSaveTicket(selectedLead.id, 'nao_concluido')}
+                            >
+                              {ticketSaving ? 'Salvando...' : 'Salvar Justificativa'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
 
             </div>
           )}
