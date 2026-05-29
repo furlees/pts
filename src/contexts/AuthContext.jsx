@@ -60,49 +60,7 @@ export function AuthProvider({ children }) {
   const [user,  setUser]  = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // 1. Sync users list from Firestore in real-time
-  useEffect(() => {
-    if (!HAS_FIREBASE) {
-      setLoading(false);
-      return;
-    }
-
-    const usersCol = collection(db, 'users');
-
-    const unsubscribe = onSnapshot(usersCol, async (snapshot) => {
-      let list = snapshot.docs.map(docDoc => ({ 
-        docId: docDoc.id, 
-        ...docDoc.data() 
-      }));
-
-      // If Firestore database is completely empty, seed it
-      if (list.length === 0) {
-        console.log("Seeding Firestore with default users...");
-        for (const seedUser of USERS_SEED) {
-          // Use its legacy numerical ID as document ID initially
-          await setDoc(doc(db, 'users', String(seedUser.id)), {
-            id: seedUser.id,
-            name: seedUser.name,
-            email: seedUser.email.toLowerCase(),
-            password: seedUser.password, // stored securely for legacy login migration fallback
-            role: seedUser.role,
-            area: seedUser.area
-          });
-        }
-        return;
-      }
-
-      // Sort by ID to preserve listing order
-      list.sort((a, b) => a.id - b.id);
-      setUsers(list);
-    }, (error) => {
-      console.error("Firestore onSnapshot error:", error);
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  // 2. Listen to Firebase Authentication State
+  // 1. Listen to Firebase Authentication State
   useEffect(() => {
     if (!HAS_FIREBASE) {
       setLoading(false);
@@ -111,7 +69,6 @@ export function AuthProvider({ children }) {
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        // Find by auth UID first
         const userRef = doc(db, 'users', firebaseUser.uid);
         const userSnap = await getDoc(userRef);
 
@@ -128,10 +85,9 @@ export function AuthProvider({ children }) {
           setUser(session);
           localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(session));
         } else {
-          // If not found by UID, search by email to link existing seeded user
-          const fresh = users.find(u => u.email.toLowerCase() === firebaseUser.email.toLowerCase());
+          // If not found by UID, search local USERS_SEED list to link existing user
+          const fresh = USERS_SEED.find(u => u.email.toLowerCase() === firebaseUser.email.toLowerCase());
           if (fresh) {
-            // Write profile under their actual Auth UID
             const newProfile = {
               id: fresh.id,
               name: fresh.name,
@@ -140,15 +96,9 @@ export function AuthProvider({ children }) {
               area: fresh.area
             };
             await setDoc(doc(db, 'users', firebaseUser.uid), newProfile);
-            
-            // Delete old seed document if it was a numerical seed ID
-            if (fresh.docId !== firebaseUser.uid) {
-              await deleteDoc(doc(db, 'users', fresh.docId));
-            }
-
             setUser({ uid: firebaseUser.uid, ...newProfile });
           } else {
-            // Default fallback profile
+            // Default profile
             setUser({
               id: 999,
               uid: firebaseUser.uid,
@@ -167,7 +117,51 @@ export function AuthProvider({ children }) {
     });
 
     return () => unsubscribe();
-  }, [users]);
+  }, []);
+
+  // 2. Sync users list from Firestore in real-time — ONLY when authenticated!
+  useEffect(() => {
+    if (!HAS_FIREBASE || !user) {
+      setUsers([]);
+      return;
+    }
+
+    const usersCol = collection(db, 'users');
+
+    const unsubscribe = onSnapshot(usersCol, async (snapshot) => {
+      let list = snapshot.docs.map(docDoc => ({ 
+        docId: docDoc.id, 
+        ...docDoc.data() 
+      }));
+
+      // If Firestore database is completely empty or only contains current user, seed the remaining USERS_SEED
+      if (list.length <= 1) {
+        console.log("Seeding Firestore with default users...");
+        for (const seedUser of USERS_SEED) {
+          const alreadyExists = list.some(u => u.email.toLowerCase() === seedUser.email.toLowerCase());
+          if (!alreadyExists) {
+            await setDoc(doc(db, 'users', String(seedUser.id)), {
+              id: seedUser.id,
+              name: seedUser.name,
+              email: seedUser.email.toLowerCase(),
+              password: seedUser.password, // Stored temporarily for migration
+              role: seedUser.role,
+              area: seedUser.area
+            });
+          }
+        }
+        return;
+      }
+
+      // Sort by ID to preserve listing order
+      list.sort((a, b) => a.id - b.id);
+      setUsers(list);
+    }, (error) => {
+      console.error("Firestore onSnapshot error:", error);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   // ── Auth ──────────────────────────────────────────────
   const login = useCallback(async (email, password) => {
@@ -183,7 +177,7 @@ export function AuthProvider({ children }) {
       return { success: true };
     } catch (error) {
       // 2. Fallback: Check if it's a legacy seed user logging in for the first time
-      const seedUser = users.find(u => u.email.toLowerCase() === cleanEmail);
+      const seedUser = USERS_SEED.find(u => u.email.toLowerCase() === cleanEmail);
       if (seedUser && seedUser.password === password) {
         try {
           console.log("Migrating seed user to Firebase Auth...");
@@ -200,10 +194,10 @@ export function AuthProvider({ children }) {
             area: seedUser.area
           });
 
-          // Delete the temporary seed document
-          if (seedUser.docId !== uid) {
-            await deleteDoc(doc(db, 'users', seedUser.docId));
-          }
+          // Delete the temporary seed document if it exists in Firestore
+          try {
+            await deleteDoc(doc(db, 'users', String(seedUser.id)));
+          } catch (_) {}
 
           return { success: true };
         } catch (createError) {
@@ -215,7 +209,7 @@ export function AuthProvider({ children }) {
       console.error("Auth error:", error);
       return { success: false, message: 'E-mail ou senha incorretos.' };
     }
-  }, [users]);
+  }, []);
 
   const logout = useCallback(async () => {
     if (HAS_FIREBASE) {
@@ -235,13 +229,11 @@ export function AuthProvider({ children }) {
     const cleanEmail = userData.email.trim().toLowerCase();
 
     try {
-      let uid = `user_${nextId}`; // Default doc ID in case creation fails (fallback)
+      let uid = `user_${nextId}`;
       
-      // If we have secondary auth initialized, create credentials securely
       if (secondaryAuth) {
         const userCred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, userData.password);
         uid = userCred.user.uid;
-        // Sign out secondary auth session immediately
         await signOut(secondaryAuth);
       }
 
@@ -272,7 +264,6 @@ export function AuthProvider({ children }) {
     const merged = { ...fresh, ...changes };
     if (merged.role === 'Admin') merged.area = null;
 
-    // Remove docId helper before storing in Firestore
     const dataToSave = { ...merged };
     delete dataToSave.docId;
 
@@ -309,11 +300,9 @@ export function AuthProvider({ children }) {
   const resetUsersToSeed = useCallback(async () => {
     if (!HAS_FIREBASE) return;
     try {
-      // Delete current firestore documents
       for (const u of users) {
         await deleteDoc(doc(db, 'users', u.docId));
       }
-      // Seed again
       for (const seedUser of USERS_SEED) {
         await setDoc(doc(db, 'users', String(seedUser.id)), {
           id: seedUser.id,
