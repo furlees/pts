@@ -31,7 +31,7 @@ export default function Login() {
         throw new Error('Preencha os campos obrigatórios.');
       }
 
-      const result = login(email, password);
+      const result = await login(email, password);
       
       if (result.success) {
         navigate('/'); // Redirect to dashboard
