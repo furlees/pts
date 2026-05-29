@@ -1,11 +1,20 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { db } from '../services/firebase';
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  deleteDoc,
+  onSnapshot
+} from 'firebase/firestore';
 
 const AuthContext = createContext({});
 
 const STORAGE_USERS_KEY = 'pts_users_db';
 const STORAGE_SESSION_KEY = 'pts_user';
 
-// Seed data — used only if localStorage has no users yet
+// Seed data — used only if localStorage/Firestore has no users yet
 const USERS_SEED = [
   { id: 1,  name: 'Matheus',           email: 'furlesmatheus@gmail.com',              password: 'Furlanes10@', role: 'Admin', area: null },
   { id: 2,  name: 'Andre Santos',      email: 'andre.santos@agenciainova.org.br',     password: 'Inova@2026',  role: 'Admin', area: null },
@@ -26,31 +35,71 @@ const USERS_SEED = [
   { id: 17, name: 'Barbara Carnevale', email: 'barbara.carnevale@uempi.com.br',       password: 'Inova@2026',  role: 'User',  area: 'Jurídico' },
 ];
 
-function loadUsers() {
+const HAS_FIREBASE = !!import.meta.env.VITE_FIREBASE_PROJECT_ID;
+
+// Local fallback helpers
+function loadLocalUsers() {
   try {
     const stored = localStorage.getItem(STORAGE_USERS_KEY);
     if (stored) return JSON.parse(stored);
   } catch (_) {}
-  // First run — persist seed
   localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(USERS_SEED));
   return USERS_SEED;
 }
 
-function saveUsers(users) {
-  localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(users));
+function saveLocalUsers(usersList) {
+  localStorage.setItem(STORAGE_USERS_KEY, JSON.stringify(usersList));
 }
 
 export function AuthProvider({ children }) {
-  const [users, setUsers] = useState(() => loadUsers());
+  const [users, setUsers] = useState([]);
   const [user,  setUser]  = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Sync users list real-time
+  useEffect(() => {
+    if (!HAS_FIREBASE) {
+      console.warn("Firebase config not found. Running AuthProvider with localStorage fallback.");
+      setUsers(loadLocalUsers());
+      setLoading(false);
+      return;
+    }
+
+    const usersCol = collection(db, 'users');
+
+    // Real-time listener
+    const unsubscribe = onSnapshot(usersCol, async (snapshot) => {
+      let list = snapshot.docs.map(doc => ({ id: Number(doc.id), ...doc.data() }));
+      
+      // If Firestore database is completely empty, seed it
+      if (list.length === 0) {
+        console.log("Seeding Firestore with default users...");
+        for (const seedUser of USERS_SEED) {
+          await setDoc(doc(db, 'users', String(seedUser.id)), seedUser);
+        }
+        // The onSnapshot will trigger again after these setDocs, so we just return
+        return;
+      }
+
+      // Sort by ID to preserve order
+      list.sort((a, b) => a.id - b.id);
+      setUsers(list);
+      setLoading(false);
+    }, (error) => {
+      console.error("Firestore onSnapshot error, falling back to localStorage:", error);
+      setUsers(loadLocalUsers());
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Sync session / current user details on mount and whenever users database changes
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_SESSION_KEY);
-    if (stored) {
+    if (stored && users.length > 0) {
       const session = JSON.parse(stored);
-      // Refresh session from live users list (in case permissions changed)
-      const fresh = loadUsers().find(u => u.id === session.id);
+      const fresh = users.find(u => u.id === session.id);
       if (fresh) {
         const refreshed = { id: fresh.id, name: fresh.name, email: fresh.email, role: fresh.role, area: fresh.area };
         setUser(refreshed);
@@ -59,13 +108,11 @@ export function AuthProvider({ children }) {
         setUser(session);
       }
     }
-    setLoading(false);
-  }, []);
+  }, [users]);
 
   // ── Auth ──────────────────────────────────────────────
-  const login = (email, password) => {
-    const db = loadUsers();
-    const found = db.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === password);
+  const login = useCallback((email, password) => {
+    const found = users.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === password);
     if (found) {
       const session = { id: found.id, name: found.name, email: found.email, role: found.role, area: found.area };
       setUser(session);
@@ -73,23 +120,18 @@ export function AuthProvider({ children }) {
       return { success: true };
     }
     return { success: false, message: 'E-mail ou senha incorretos.' };
-  };
+  }, [users]);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     setUser(null);
     localStorage.removeItem(STORAGE_SESSION_KEY);
-  };
-
-  // ── User management (Admin only) ──────────────────────
-  const persistUsers = useCallback((updated) => {
-    setUsers(updated);
-    saveUsers(updated);
   }, []);
 
+  // ── User management (Admin only) ──────────────────────
+
   /** Add a new user */
-  const addUser = useCallback((userData) => {
-    const db = loadUsers();
-    const nextId = db.length > 0 ? Math.max(...db.map(u => u.id)) + 1 : 1;
+  const addUser = useCallback(async (userData) => {
+    const nextId = users.length > 0 ? Math.max(...users.map(u => u.id)) + 1 : 1;
     const newUser = {
       id: nextId,
       name:     userData.name.trim(),
@@ -98,46 +140,85 @@ export function AuthProvider({ children }) {
       role:     userData.role,
       area:     userData.role === 'Admin' ? null : (userData.area || null),
     };
-    const updated = [...db, newUser];
-    persistUsers(updated);
-    return { success: true };
-  }, [persistUsers]);
 
-  /** Update an existing user's role, area or name */
-  const updateUser = useCallback((id, changes) => {
-    const db = loadUsers();
-    const updated = db.map(u => {
-      if (u.id !== id) return u;
-      const merged = { ...u, ...changes };
-      if (merged.role === 'Admin') merged.area = null;
-      return merged;
-    });
-    persistUsers(updated);
-    // If the edited user is the current session, refresh session
-    if (user && user.id === id) {
-      const fresh = updated.find(u => u.id === id);
-      if (fresh) {
-        const session = { id: fresh.id, name: fresh.name, email: fresh.email, role: fresh.role, area: fresh.area };
-        setUser(session);
-        localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(session));
+    if (HAS_FIREBASE) {
+      try {
+        await setDoc(doc(db, 'users', String(nextId)), newUser);
+      } catch (error) {
+        console.error("Firebase error in addUser:", error);
+        return { success: false, message: 'Erro ao salvar no banco de dados.' };
       }
+    } else {
+      const updated = [...users, newUser];
+      setUsers(updated);
+      saveLocalUsers(updated);
     }
     return { success: true };
-  }, [persistUsers, user]);
+  }, [users]);
+
+  /** Update an existing user's role, area or name */
+  const updateUser = useCallback(async (id, changes) => {
+    const fresh = users.find(u => u.id === id);
+    if (!fresh) return { success: false, message: 'Usuário não encontrado.' };
+
+    const merged = { ...fresh, ...changes };
+    if (merged.role === 'Admin') merged.area = null;
+
+    if (HAS_FIREBASE) {
+      try {
+        await setDoc(doc(db, 'users', String(id)), merged);
+      } catch (error) {
+        console.error("Firebase error in updateUser:", error);
+        return { success: false, message: 'Erro ao atualizar no banco de dados.' };
+      }
+    } else {
+      const updated = users.map(u => u.id === id ? merged : u);
+      setUsers(updated);
+      saveLocalUsers(updated);
+    }
+
+    return { success: true };
+  }, [users]);
 
   /** Delete a user (cannot delete yourself) */
-  const deleteUser = useCallback((id) => {
+  const deleteUser = useCallback(async (id) => {
     if (user && user.id === id) return { success: false, message: 'Você não pode remover sua própria conta.' };
-    const db = loadUsers();
-    const updated = db.filter(u => u.id !== id);
-    persistUsers(updated);
+
+    if (HAS_FIREBASE) {
+      try {
+        await deleteDoc(doc(db, 'users', String(id)));
+      } catch (error) {
+        console.error("Firebase error in deleteUser:", error);
+        return { success: false, message: 'Erro ao deletar no banco de dados.' };
+      }
+    } else {
+      const updated = users.filter(u => u.id !== id);
+      setUsers(updated);
+      saveLocalUsers(updated);
+    }
     return { success: true };
-  }, [persistUsers, user]);
+  }, [users, user]);
 
   /** Reset all users back to seed data */
-  const resetUsersToSeed = useCallback(() => {
-    persistUsers(USERS_SEED);
-  }, [persistUsers]);
+  const resetUsersToSeed = useCallback(async () => {
+    if (HAS_FIREBASE) {
+      try {
+        // Delete all current docs
+        for (const u of users) {
+          await deleteDoc(doc(db, 'users', String(u.id)));
+        }
+        // Seed again
+        for (const seedUser of USERS_SEED) {
+          await setDoc(doc(db, 'users', String(seedUser.id)), seedUser);
+        }
+      } catch (error) {
+        console.error("Firebase error in resetUsersToSeed:", error);
+      }
+    } else {
+      setUsers(USERS_SEED);
+      saveLocalUsers(USERS_SEED);
+    }
+  }, [users]);
 
   const isAdmin  = user?.role === 'Admin';
   const userArea = user?.area || null;
