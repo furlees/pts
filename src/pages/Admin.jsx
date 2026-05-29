@@ -70,7 +70,7 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await onSave(u.id, {
+      const res = await onSave(u.docId || String(u.id), {
         name: form.name.trim() || u.name,
         role: form.role,
         area: form.role === 'Admin' ? null : (form.area || null),
@@ -91,7 +91,7 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
   const handleDelete = async () => {
     if (confirm) {
       try {
-        const res = await onDelete(u.id);
+        const res = await onDelete(u.docId || String(u.id));
         if (res && res.success === false) {
           alert(res.message || 'Erro ao remover usuário.');
         }

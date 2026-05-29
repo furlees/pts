@@ -5,6 +5,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   deleteDoc,
   onSnapshot
@@ -60,7 +61,38 @@ export function AuthProvider({ children }) {
   const [user,  setUser]  = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // 1. Listen to Firebase Authentication State
+  // 1. One-off seeding when app boots (avoids overwriting edits on lists refresh)
+  useEffect(() => {
+    if (!HAS_FIREBASE) return;
+
+    const checkAndSeed = async () => {
+      try {
+        const usersCol = collection(db, 'users');
+        const snapshot = await getDocs(usersCol);
+        
+        // If collection is completely empty, populate it
+        if (snapshot.empty) {
+          console.log("Firestore users collection is empty. Seeding...");
+          for (const seedUser of USERS_SEED) {
+            await setDoc(doc(db, 'users', String(seedUser.id)), {
+              id: seedUser.id,
+              name: seedUser.name,
+              email: seedUser.email.toLowerCase(),
+              password: seedUser.password, // Stored temporarily for migration
+              role: seedUser.role,
+              area: seedUser.area
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Error during checkAndSeed:", error);
+      }
+    };
+
+    checkAndSeed();
+  }, []);
+
+  // 2. Listen to Firebase Authentication State
   useEffect(() => {
     if (!HAS_FIREBASE) {
       setLoading(false);
@@ -119,7 +151,7 @@ export function AuthProvider({ children }) {
     return () => unsubscribe();
   }, []);
 
-  // 2. Sync users list from Firestore in real-time — ONLY when authenticated!
+  // 3. Sync users list from Firestore in real-time — ONLY when authenticated!
   useEffect(() => {
     if (!HAS_FIREBASE || !user) {
       setUsers([]);
@@ -128,30 +160,11 @@ export function AuthProvider({ children }) {
 
     const usersCol = collection(db, 'users');
 
-    const unsubscribe = onSnapshot(usersCol, async (snapshot) => {
+    const unsubscribe = onSnapshot(usersCol, (snapshot) => {
       let list = snapshot.docs.map(docDoc => ({ 
         docId: docDoc.id, 
         ...docDoc.data() 
       }));
-
-      // If Firestore database is completely empty or only contains current user, seed the remaining USERS_SEED
-      if (list.length <= 1) {
-        console.log("Seeding Firestore with default users...");
-        for (const seedUser of USERS_SEED) {
-          const alreadyExists = list.some(u => u.email.toLowerCase() === seedUser.email.toLowerCase());
-          if (!alreadyExists) {
-            await setDoc(doc(db, 'users', String(seedUser.id)), {
-              id: seedUser.id,
-              name: seedUser.name,
-              email: seedUser.email.toLowerCase(),
-              password: seedUser.password, // Stored temporarily for migration
-              role: seedUser.role,
-              area: seedUser.area
-            });
-          }
-        }
-        return;
-      }
 
       // Sort by ID to preserve listing order
       list.sort((a, b) => a.id - b.id);
@@ -253,14 +266,14 @@ export function AuthProvider({ children }) {
     }
   }, [users]);
 
-  /** Update an existing user's role, area or name */
-  const updateUser = useCallback(async (id, changes) => {
+  /** Update an existing user's role, area or name using their document ID */
+  const updateUser = useCallback(async (docId, changes) => {
     if (!HAS_FIREBASE) return { success: false, message: 'Banco offline.' };
 
-    const fresh = users.find(u => u.id === id);
+    const fresh = users.find(u => u.docId === docId || String(u.id) === String(docId));
     if (!fresh) return { success: false, message: 'Usuário não encontrado.' };
 
-    const docId = fresh.docId || String(id);
+    const targetDocId = fresh.docId || docId;
     const merged = { ...fresh, ...changes };
     if (merged.role === 'Admin') merged.area = null;
 
@@ -268,7 +281,7 @@ export function AuthProvider({ children }) {
     delete dataToSave.docId;
 
     try {
-      await setDoc(doc(db, 'users', docId), dataToSave);
+      await setDoc(doc(db, 'users', targetDocId), dataToSave);
       return { success: true };
     } catch (error) {
       console.error("Firebase error in updateUser:", error);
@@ -276,19 +289,19 @@ export function AuthProvider({ children }) {
     }
   }, [users]);
 
-  /** Delete a user (cannot delete yourself) */
-  const deleteUser = useCallback(async (id) => {
-    if (user && (user.id === id || user.uid === id)) {
+  /** Delete a user using their document ID */
+  const deleteUser = useCallback(async (docId) => {
+    if (user && (user.id === docId || user.uid === docId || user.docId === docId)) {
       return { success: false, message: 'Você não pode remover sua própria conta.' };
     }
 
-    const fresh = users.find(u => u.id === id);
+    const fresh = users.find(u => u.docId === docId || String(u.id) === String(docId));
     if (!fresh) return { success: false, message: 'Usuário não encontrado.' };
 
-    const docId = fresh.docId || String(id);
+    const targetDocId = fresh.docId || docId;
 
     try {
-      await deleteDoc(doc(db, 'users', docId));
+      await deleteDoc(doc(db, 'users', targetDocId));
       return { success: true };
     } catch (error) {
       console.error("Firebase error in deleteUser:", error);
