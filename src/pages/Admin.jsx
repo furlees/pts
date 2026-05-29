@@ -69,19 +69,39 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
 
   const handleSave = async () => {
     setSaving(true);
-    await onSave(u.id, {
-      name: form.name.trim() || u.name,
-      role: form.role,
-      area: form.role === 'Admin' ? null : (form.area || null),
-      ...(form.password ? { password: form.password } : {}),
-    });
-    setSaving(false);
-    setEditing(false);
+    try {
+      const res = await onSave(u.id, {
+        name: form.name.trim() || u.name,
+        role: form.role,
+        area: form.role === 'Admin' ? null : (form.area || null),
+        ...(form.password ? { password: form.password } : {}),
+      });
+      if (res && res.success === false) {
+        alert(res.message || 'Erro ao salvar usuário.');
+      } else {
+        setEditing(false);
+      }
+    } catch (err) {
+      alert(err.message || 'Erro ao salvar usuário.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const handleDelete = () => {
-    if (confirm) { onDelete(u.id); setConfirm(false); }
-    else setConfirm(true);
+  const handleDelete = async () => {
+    if (confirm) {
+      try {
+        const res = await onDelete(u.id);
+        if (res && res.success === false) {
+          alert(res.message || 'Erro ao remover usuário.');
+        }
+      } catch (err) {
+        alert(err.message || 'Erro ao remover usuário.');
+      }
+      setConfirm(false);
+    } else {
+      setConfirm(true);
+    }
   };
 
   const isSelf = u.id === currentUserId;
@@ -228,10 +248,18 @@ function AddUserModal({ onClose, onAdd }) {
       return;
     }
     setSaving(true);
-    const res = onAdd(form);
-    setSaving(false);
-    if (res?.success === false) { setError(res.message || 'Erro ao adicionar usuário.'); return; }
-    onClose();
+    try {
+      const res = await onAdd(form);
+      if (res && res.success === false) {
+        setError(res.message || 'Erro ao adicionar usuário.');
+      } else {
+        onClose();
+      }
+    } catch (err) {
+      setError(err.message || 'Erro ao adicionar usuário.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
