@@ -78,7 +78,8 @@ export async function fetchTicketMetrics({ startDate, endDate } = {}) {
   let query = supabase
     .from('dados_pts')
     .select('id, nome, empresa, departamento, ticket_status, ticket_justificativa, ticket_updated_at, created_at')
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false });
 
   query = applyDateFilter(query, 'created_at', startDate, endDate);
 
@@ -265,6 +266,7 @@ export async function fetchRecentActivity({ startDate, endDate, limit = 10 } = {
     .from('dados_pts')
     .select('id, created_at, nome, empresa, departamento, motivo, resumo')
     .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .limit(limit);
 
   query = applyDateFilter(query, 'created_at', startDate, endDate);
@@ -289,6 +291,7 @@ export async function fetchAverageResponseTime({ startDate, endDate } = {}) {
         .from('chat_pts')
         .select('session_id, message, date')
         .order('date', { ascending: true }) // Garantir ordem cronológica
+        .order('id', { ascending: true }) // Desempate determinístico para evitar bugs de paginação
         .range(page * pageSize, (page + 1) * pageSize - 1);
 
       query = applyDateFilter(query, 'date', startDate, endDate);
@@ -386,6 +389,7 @@ export async function fetchAllLeads({ startDate, endDate, limit = 500 } = {}) {
     .from('dados_pts')
     .select('id, created_at, nome, empresa, telefone, email, cargo, departamento, motivo, resumo, transferencia_correta, departamento_correto, ticket_status, ticket_justificativa, ticket_updated_at')
     .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .limit(limit);
 
   query = applyDateFilter(query, 'created_at', startDate, endDate);
@@ -533,6 +537,7 @@ export async function fetchChatConversations({ startDate, endDate, limit } = {})
         .from('chat_pts')
         .select('id, session_id, message, date')
         .order('date', { ascending: false })
+        .order('id', { ascending: false }) // Garante desempate determinístico
         .limit(limit);
 
       query = applyDateFilter(query, 'date', startDate, endDate);
@@ -547,6 +552,7 @@ export async function fetchChatConversations({ startDate, endDate, limit } = {})
         .from('chat_pts')
         .select('id, session_id, message, date')
         .order('date', { ascending: false })
+        .order('id', { ascending: false }) // Garante desempate determinístico nas páginas
         .range(page * pageSize, (page + 1) * pageSize - 1);
 
       query = applyDateFilter(query, 'date', startDate, endDate);

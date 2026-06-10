@@ -174,8 +174,15 @@ export default function Chat() {
   const activeMessages = useMemo(() => {
     if (!activeSession) return [];
     
-    // Invertemos para ficar cronológico
-    const chronological = [...activeSession.rawMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
+    // Invertemos para ficar cronológico (ordenando por data, e por ID como desempate se as datas forem idênticas)
+    const chronological = [...activeSession.rawMessages].sort((a, b) => {
+      const timeA = new Date(a.date).getTime();
+      const timeB = new Date(b.date).getTime();
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+      return a.id - b.id;
+    });
     
     // Processamos as linhas expandindo os arrays de blocos
     let finalBlocks = [];
