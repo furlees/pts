@@ -520,18 +520,60 @@ export async function fetchAllLeads({ startDate, endDate, limit = 500 } = {}) {
 // =============================================
 // HISTÓRICO DE CHAT DA IA (chat_pts)
 // =============================================
-export async function fetchChatConversations({ startDate, endDate, limit = 50 } = {}) {
-  let query = supabase
-    .from('chat_pts')
-    .select('id, session_id, message, date')
-    .order('date', { ascending: false })
-    .limit(limit);
+export async function fetchChatConversations({ startDate, endDate, limit } = {}) {
+  try {
+    let allMessages = [];
+    let page = 0;
+    const pageSize = 1000;
+    let hasMore = true;
 
-  query = applyDateFilter(query, 'date', startDate, endDate);
+    // Se um limite pequeno for especificado, fazemos uma query direta simples
+    if (limit && limit < pageSize) {
+      let query = supabase
+        .from('chat_pts')
+        .select('id, session_id, message, date')
+        .order('date', { ascending: false })
+        .limit(limit);
 
-  const { data, error } = await query;
-  if (error) console.error('[HelenaService] Erro Chat IA:', error.message);
-  return { data: data || [], error: error || null };
+      query = applyDateFilter(query, 'date', startDate, endDate);
+      const { data, error } = await query;
+      if (error) throw error;
+      return { data: data || [], error: null };
+    }
+
+    // Caso contrário (ou se for ilimitado), paginamos para obter todos/limite solicitado
+    while (hasMore) {
+      let query = supabase
+        .from('chat_pts')
+        .select('id, session_id, message, date')
+        .order('date', { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+
+      query = applyDateFilter(query, 'date', startDate, endDate);
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        allMessages = allMessages.concat(data);
+        if (limit && allMessages.length >= limit) {
+          allMessages = allMessages.slice(0, limit);
+          hasMore = false;
+        } else if (data.length < pageSize) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return { data: allMessages, error: null };
+  } catch (err) {
+    console.error('[HelenaService] Erro Chat IA:', err.message || err);
+    return { data: [], error: err || null };
+  }
 }
 
 // =============================================

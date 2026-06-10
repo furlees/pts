@@ -102,7 +102,7 @@ export function useChatData(dateRange = { startDate: null, endDate: null }) {
     setError(null);
 
     try {
-      const { data, error } = await fetchChatConversations({ limit: 1000, ...dateRange });
+      const { data, error } = await fetchChatConversations({ ...dateRange });
       
       if (error) {
         throw new Error(error.message || 'Erro ao buscar conversas do chat');

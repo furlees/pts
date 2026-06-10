@@ -130,6 +130,7 @@ export default function Chat() {
 
   const { conversations, loading, error, refetch } = useChatData(processedDateRange);
   const [activeSessionId, setActiveSessionId] = useState(null);
+  const [searchTerm, setSearchTerm] = useState('');
   
   const messagesEndRef = useRef(null);
 
@@ -158,6 +159,15 @@ export default function Chat() {
 
     return Object.values(groups).sort((a, b) => new Date(b.lastDate) - new Date(a.lastDate));
   }, [conversations]);
+
+  const filteredSessions = useMemo(() => {
+    if (!searchTerm.trim()) return groupedSessions;
+    const lowerSearch = searchTerm.toLowerCase();
+    return groupedSessions.filter(session => 
+      session.displayPhone.toLowerCase().includes(lowerSearch) ||
+      session.session_id.toLowerCase().includes(lowerSearch)
+    );
+  }, [groupedSessions, searchTerm]);
 
   const activeSession = groupedSessions.find(s => s.session_id === activeSessionId);
   
@@ -212,19 +222,33 @@ export default function Chat() {
         {/* Painel da Esquerda */}
         <div className="panel" style={{ width: '320px', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
           <div className="panel-header" style={{ height: '60px', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <h3 style={{ fontSize: '0.9rem' }}>Conversas ({groupedSessions.length})</h3>
+            <h3 style={{ fontSize: '0.9rem' }}>Conversas ({filteredSessions.length})</h3>
             <button onClick={refetch} style={{ color: 'var(--color-accent)', cursor: 'pointer', fontSize: '0.8rem' }}>Atualizar</button>
+          </div>
+
+          {/* Campo de Busca */}
+          <div style={{ padding: '0 12px 12px 12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--color-bg-card)', padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-sm)' }}>
+              <Search size={16} style={{ marginRight: '8px', color: 'var(--color-text-tertiary)' }} />
+              <input 
+                type="text" 
+                placeholder="Buscar conversa..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                style={{ border: 'none', background: 'transparent', color: 'var(--color-text-primary)', outline: 'none', width: '100%', fontSize: '0.8rem' }}
+              />
+            </div>
           </div>
           
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-            {loading && groupedSessions.length === 0 ? (
+            {loading && filteredSessions.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: '0.8rem' }}>Carregando...</div>
             ) : error ? (
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--color-error)', fontSize: '0.8rem' }}>{error}</div>
-            ) : groupedSessions.length === 0 ? (
+            ) : filteredSessions.length === 0 ? (
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: '0.8rem' }}>Nenhuma conversa encontrada.</div>
             ) : (
-              groupedSessions.map((session) => {
+              filteredSessions.map((session) => {
                 const isActive = activeSessionId === session.session_id;
                 return (
                   <div
