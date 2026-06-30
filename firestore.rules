@@ -1,0 +1,45 @@
+// ============================================================
+// REFERÊNCIA das regras do Firestore (projeto helena-pts).
+//
+// Este arquivo NÃO é aplicado automaticamente — não há Firebase CLI
+// configurado no projeto. Cole estas regras no Firebase Console:
+//   Firebase Console > helena-pts > Firestore Database > aba "Regras"
+//
+// As coleções novas usadas pela importação de planilhas são:
+//   - executivo            (docs: current, config)
+//   - executivo_historico  (snapshots de cada atualização)
+// ============================================================
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // (opcional) somente Admin escreve — exige doc users/{uid} com role
+    function isAdmin() {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin';
+    }
+
+    // Usuários (mantém o comportamento atual do app)
+    match /users/{doc} {
+      allow read, write: if signedIn();
+    }
+
+    // Dashboard Executivo — versão ativa + configuração das planilhas
+    match /executivo/{doc} {
+      allow read:  if signedIn();
+      allow write: if signedIn();   // troque por isAdmin() para restringir
+    }
+
+    // Histórico de versões dos indicadores
+    match /executivo_historico/{doc} {
+      allow read:  if signedIn();
+      allow write: if signedIn();   // troque por isAdmin() para restringir
+    }
+  }
+}

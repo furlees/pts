@@ -5,13 +5,16 @@ import {
   Legend, ResponsiveContainer,
 } from 'recharts';
 import {
-  loadExecutivoData, saveExecutivoData, MESES, MESES_LABEL,
+  MESES, MESES_LABEL,
   EIXO_CORES, getConceito, getProgressoAtual,
 } from '../data/executivoData';
 import { useAuth } from '../contexts/AuthContext';
+import { useExecutivoData } from '../hooks/useExecutivoData';
+import ImportPlanilhasModal from '../components/ImportPlanilhasModal';
 import {
   TrendingUp, Target, ChevronDown, ChevronRight, CheckCircle,
   Circle, Pencil, X, Check, BarChart2, LayoutGrid, AlertTriangle,
+  FileSpreadsheet, RefreshCw, Cloud,
 } from 'lucide-react';
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -246,6 +249,15 @@ function EditModal({ data, onSave, onClose }) {
     }));
   };
 
+  const handleMetaChange = (indId, val) => {
+    setForm(prev => ({
+      ...prev,
+      indicadoresOperacionais: prev.indicadoresOperacionais.map(ind =>
+        ind.id !== indId ? ind : { ...ind, meta: val === '' ? null : Number(val) }
+      ),
+    }));
+  };
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20, backdropFilter: 'blur(4px)' }}>
       <div style={{ background: 'var(--color-bg-card)', borderRadius: 'var(--radius-lg)', width: '100%', maxWidth: 700, maxHeight: '85vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 64px rgba(0,0,0,0.35)', animation: 'slideDown 0.2s ease-out' }}>
@@ -256,7 +268,19 @@ function EditModal({ data, onSave, onClose }) {
         <div style={{ overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
           {form.indicadoresOperacionais.map(ind => (
             <div key={ind.id}>
-              <p style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--color-text-primary)', marginBottom: 10 }}>{ind.nome}</p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12, flexWrap: 'wrap' }}>
+                <p style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--color-text-primary)' }}>{ind.nome}</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <label style={{ fontSize: '0.72rem', color: 'var(--color-text-tertiary)' }}>Meta (alvo):</label>
+                  <input
+                    type="number"
+                    value={ind.meta ?? ''}
+                    onChange={e => handleMetaChange(ind.id, e.target.value)}
+                    placeholder="—"
+                    style={{ width: 110, padding: '5px 9px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.8rem', outline: 'none' }}
+                  />
+                </div>
+              </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
                 {MESES.map(m => (
                   <div key={m}>
@@ -306,20 +330,22 @@ function ChartTooltip({ active, payload, label }) {
 // MAIN PAGE
 // ════════════════════════════════════════════════════════════
 export default function ExecutivoDashboard() {
-  const { isAdmin } = useAuth();
-  const [data, setData]           = useState(() => loadExecutivoData());
+  const { user, isAdmin } = useAuth();
+  const exec = useExecutivoData(user);
+  const data = exec.dataset;
   const [activeTab, setActiveTab] = useState('estrategico');
   const [eixoAtivo, setEixoAtivo] = useState(1);
   const [editModal, setEditModal] = useState(false);
+  const [importModal, setImportModal] = useState(false);
   const [mesSel, setMesSel]       = useState('abr');
 
   const handleSaveEdit = useCallback((newData) => {
-    setData(newData);
-    saveExecutivoData(newData);
-  }, []);
+    exec.saveEdited(newData);
+  }, [exec]);
 
   // ── Chart data ───────────────────────────────────────────
   const evolucaoData = useMemo(() => {
+    if (!data) return [];
     return MESES
       .filter(m => data.eixos.some(e => e.progressoMensal[m] !== null))
       .map(m => ({
@@ -332,10 +358,10 @@ export default function ExecutivoDashboard() {
       }));
   }, [data]);
 
-  const eixoSelecionado = data.eixos.find(e => e.id === eixoAtivo);
+  const eixoSelecionado = data?.eixos.find(e => e.id === eixoAtivo);
 
   // Pontuation table
-  const tabela = useMemo(() => [
+  const tabela = useMemo(() => data ? [
     ...data.eixos.map(e => ({
       nome: `Eixo ${e.id} — ${e.nomeAbrev}`,
       cor: EIXO_CORES[e.id],
@@ -351,10 +377,11 @@ export default function ExecutivoDashboard() {
       pct: data.pontuacaoGlobal.percentual,
       isTotal: true,
     },
-  ], [data]);
+  ] : [], [data]);
 
   // Operational chart (normalized %)
   const opChartData = useMemo(() => {
+    if (!data) return [];
     return MESES
       .filter(m => data.indicadoresOperacionais.some(i => i.valores[m] !== null))
       .map(m => {
@@ -369,10 +396,52 @@ export default function ExecutivoDashboard() {
 
   const OP_COLORS = ['#3b82f6','#10b981','#8b5cf6','#f59e0b','#ec4899','#14b8a6'];
 
+  // ── Estado de carregamento ───────────────────────────────
+  if (exec.loading || !data) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 20px', gap: 14, color: 'var(--color-text-tertiary)' }}>
+        <RefreshCw size={28} className="spin" />
+        <p style={{ fontSize: '0.9rem' }}>Carregando indicadores...</p>
+      </div>
+    );
+  }
+
   const globalConceito = getConceito(data.pontuacaoGlobal.percentual);
+
+  const fmtUpdate = (ts) => {
+    if (!ts) return null;
+    try {
+      const d = typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts);
+      return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    } catch { return null; }
+  };
+  const updateLabel = fmtUpdate(exec.meta?.updatedAt);
+  const SOURCE_LABEL = { google: 'Google Sheets', upload: 'upload', 'edicao-manual': 'edição manual', restauracao: 'restauração' };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* ── Barra: status de atualização + importação ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8rem', color: 'var(--color-text-tertiary)' }}>
+          {exec.sync.status === 'syncing'
+            ? (<><RefreshCw size={14} className="spin" /> Sincronizando com o Google Sheets...</>)
+            : updateLabel
+              ? (<><Cloud size={14} /> Última atualização: <strong style={{ color: 'var(--color-text-secondary)' }}>{updateLabel}</strong>
+                  {exec.meta?.source && <> · via {SOURCE_LABEL[exec.meta.source] || exec.meta.source}</>}
+                  {exec.meta?.userName && <> · por {exec.meta.userName}</>}</>)
+              : (<><AlertTriangle size={14} /> Dados de exemplo — importe as planilhas para alimentar o painel.</>)}
+        </div>
+        {isAdmin && (
+          <button
+            id="import-planilhas-btn"
+            onClick={() => setImportModal(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 18px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer', boxShadow: '0 2px 8px rgba(37,99,235,0.25)' }}
+          >
+            <FileSpreadsheet size={15} /> Importar / Sincronizar Planilhas
+          </button>
+        )}
+      </div>
 
       {/* ── Tab Bar ──────────────────────────────────── */}
       <div style={{ display: 'flex', gap: 6, background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: 6, width: 'fit-content' }}>
@@ -444,7 +513,6 @@ export default function ExecutivoDashboard() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
               {data.eixos.map(e => {
                 const cur = getProgressoAtual({ progresso: undefined, progressoMensal: e.progressoMensal });
-                const ec  = getConceito(e.pontuacao.percentual);
                 const cor = EIXO_CORES[e.id];
                 return (
                   <button
@@ -682,6 +750,11 @@ export default function ExecutivoDashboard() {
       {/* Edit Modal */}
       {editModal && (
         <EditModal data={data} onSave={handleSaveEdit} onClose={() => setEditModal(false)} />
+      )}
+
+      {/* Import / Sync Modal */}
+      {importModal && (
+        <ImportPlanilhasModal exec={exec} onClose={() => { exec.clearSync(); setImportModal(false); }} />
       )}
 
     </div>
