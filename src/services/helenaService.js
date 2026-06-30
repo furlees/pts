@@ -626,3 +626,39 @@ export async function fetchDashboardData({ startDate, endDate } = {}) {
     error: firstError || null,
   };
 }
+
+export async function fetchMessagesForPhone(phone) {
+  if (!phone) return { data: [], error: null };
+  const cleanTarget = phone.replace(/\D/g, '');
+  if (!cleanTarget) return { data: [], error: null };
+
+  try {
+    const { data, error } = await supabase
+      .from('chat_pts')
+      .select('id, session_id, message, date')
+      .or(`session_id.eq.${cleanTarget},session_id.eq.${cleanTarget}@s.whatsapp.net`)
+      .order('date', { ascending: true });
+
+    if (error) throw error;
+    return { data: data || [], error: null };
+  } catch (err) {
+    console.error('[HelenaService] Erro ao buscar mensagens por telefone:', err);
+    return { data: [], error: err };
+  }
+}
+
+export async function updateLeadFields(leadId, fields) {
+  try {
+    const { data, error } = await supabase
+      .from('dados_pts')
+      .update(fields)
+      .eq('id', leadId)
+      .select();
+
+    if (error) throw error;
+    return { data: data || [], error: null };
+  } catch (err) {
+    console.error('[HelenaService] Erro ao atualizar campos do lead:', err);
+    return { data: [], error: err };
+  }
+}

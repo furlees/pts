@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Users, UserPlus, Shield, ShieldOff, Pencil, Trash2,
@@ -7,23 +7,26 @@ import {
 } from 'lucide-react';
 
 const AREAS_LIST = [
-  'Administrativo', 'Cel40', 'Comunicação', 'Compras', 'CPL',
-  'Eventos e Comunicação', 'Financeiro', 'HUBIZ', 'Inovação e Projetos',
-  'Jurídico', 'Parcerias Estratégicas',
+  'Administrativo', 'CEFI', 'CET', 'Comercial', 'Comunicação',
+  'Compras', 'CPL', 'Eventos', 'Financeiro', 'Jurídico',
+  'Hubiz', 'Inovação e Projetos', 'Parcerias Estratégicas', 'RH',
 ];
 
 const AREA_COLORS = {
-  'Jurídico':               '#8b5cf6',
-  'Parcerias Estratégicas':  '#3b82f6',
   'Administrativo':          '#10b981',
-  'Financeiro':              '#f59e0b',
-  'Inovação e Projetos':     '#ec4899',
+  'CEFI':                    '#64748b',
+  'CET':                     '#06b6d4',
+  'Comercial':               '#3b82f6',
   'Comunicação':             '#14b8a6',
-  'CPL':                     '#6366f1',
-  'HUBIZ':                   '#f97316',
-  'Cel40':                   '#64748b',
   'Compras':                 '#84cc16',
-  'Eventos e Comunicação':   '#06b6d4',
+  'CPL':                     '#6366f1',
+  'Eventos':                 '#06b6d4',
+  'Financeiro':              '#f59e0b',
+  'Jurídico':                '#8b5cf6',
+  'Hubiz':                   '#f97316',
+  'Inovação e Projetos':     '#ec4899',
+  'Parcerias Estratégicas':  '#3b82f6',
+  'RH':                      '#ec4899',
 };
 
 const EMPTY_FORM = { name: '', email: '', password: '', role: 'User', area: '' };
@@ -47,23 +50,143 @@ function RoleBadge({ role }) {
 
 function AreaBadge({ area }) {
   if (!area) return <span style={{ color: 'var(--color-text-tertiary)', fontSize: '0.8rem' }}>—</span>;
-  const color = AREA_COLORS[area] || '#64748b';
+  const areas = area.split(',').map(a => a.trim()).filter(Boolean);
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: '5px',
-      padding: '3px 10px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700,
-      background: `${color}18`, color, border: `1px solid ${color}35`,
-    }}>
-      <Building2 size={10} />
-      {area}
-    </span>
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+      {areas.map(a => {
+        const color = AREA_COLORS[a] || '#64748b';
+        return (
+          <span
+            key={a}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              padding: '3px 10px',
+              borderRadius: '6px',
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              background: `${color}18`,
+              color,
+              border: `1px solid ${color}35`,
+            }}
+          >
+            <Building2 size={10} />
+            {a}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function MultiAreaSelector({ selectedAreas, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleToggle = (area) => {
+    let next;
+    if (selectedAreas.includes(area)) {
+      next = selectedAreas.filter(a => a !== area);
+    } else {
+      next = [...selectedAreas, area];
+    }
+    onChange(next);
+  };
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', width: '100%', textAlign: 'left' }}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen(!open)}
+        style={{
+          width: '100%',
+          padding: '8px 12px',
+          borderRadius: 'var(--radius-md)',
+          border: '1px solid var(--color-border)',
+          background: 'var(--color-bg-input)',
+          color: 'var(--color-text-primary)',
+          fontSize: '0.85rem',
+          textAlign: 'left',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.4 : 1,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          boxSizing: 'border-box'
+        }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selectedAreas.length === 0 ? 'Sem área' : `${selectedAreas.length} selecionada(s)`}
+        </span>
+        <ChevronDown size={14} style={{ opacity: 0.7, flexShrink: 0 }} />
+      </button>
+
+      {open && !disabled && (
+        <div style={{
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          right: 0,
+          zIndex: 1000,
+          background: 'var(--color-bg-card)',
+          border: '1px solid var(--color-border)',
+          borderRadius: 'var(--radius-md)',
+          boxShadow: 'var(--shadow-lg)',
+          marginTop: '4px',
+          maxHeight: '180px',
+          overflowY: 'auto',
+          padding: '8px'
+        }}>
+          {AREAS_LIST.map(area => {
+            const checked = selectedAreas.includes(area);
+            return (
+              <label
+                key={area}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '6px 8px',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.8rem',
+                  color: 'var(--color-text-primary)',
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                  backgroundColor: checked ? 'var(--color-bg-hover)' : 'transparent'
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => handleToggle(area)}
+                  style={{ cursor: 'pointer' }}
+                />
+                <span>{area}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
 // ── Inline edit row ────────────────────────────────────────
 function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
   const [editing, setEditing] = useState(false);
-  const [form, setForm]       = useState({ name: u.name, role: u.role, area: u.area || '', password: '' });
+  const [form, setForm]       = useState({ name: u.name, email: u.email || '', role: u.role, area: u.area || '', password: '' });
   const [confirm, setConfirm] = useState(false);
   const [saving, setSaving]   = useState(false);
 
@@ -72,6 +195,7 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
     try {
       const res = await onSave(u.docId || String(u.id), {
         name: form.name.trim() || u.name,
+        email: form.email.trim().toLowerCase() || u.email,
         role: form.role,
         area: form.role === 'Admin' ? null : (form.area || null),
         ...(form.password ? { password: form.password } : {}),
@@ -117,7 +241,7 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{
               width: '36px', height: '36px', borderRadius: '50%', flexShrink: 0,
-              background: u.role === 'Admin' ? '#8b5cf6' : (AREA_COLORS[u.area] || 'var(--color-accent)'),
+              background: u.role === 'Admin' ? '#8b5cf6' : (AREA_COLORS[u.area ? u.area.split(',')[0].trim() : ''] || 'var(--color-accent)'),
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: '#fff', fontWeight: 700, fontSize: '0.8rem',
             }}>
@@ -137,7 +261,7 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
           <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
             <button
               id={`edit-user-${u.id}`}
-              onClick={() => { setForm({ name: u.name, role: u.role, area: u.area || '', password: '' }); setEditing(true); }}
+              onClick={() => { setForm({ name: u.name, email: u.email || '', role: u.role, area: u.area || '', password: '' }); setEditing(true); }}
               style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-secondary)', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }}
               onMouseOver={e => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
               onMouseOut={e  => { e.currentTarget.style.borderColor = 'var(--color-border)';  e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
@@ -163,13 +287,23 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
   return (
     <tr style={{ background: 'var(--color-accent-light)', borderBottom: '1px solid var(--color-border)' }}>
       <td style={{ padding: '12px 16px' }} colSpan={4}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.5fr 1fr 1.2fr 1fr auto', gap: '10px', alignItems: 'end' }}>
           {/* Name */}
           <div>
             <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nome</label>
             <input
               value={form.name}
               onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+              style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.85rem', outline: 'none' }}
+            />
+          </div>
+          {/* Email */}
+          <div>
+            <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>E-mail</label>
+            <input
+              type="email"
+              value={form.email}
+              onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
               style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.85rem', outline: 'none' }}
             />
           </div>
@@ -188,15 +322,11 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
           {/* Area */}
           <div>
             <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Área</label>
-            <select
-              value={form.area}
+            <MultiAreaSelector
               disabled={form.role === 'Admin'}
-              onChange={e => setForm(p => ({ ...p, area: e.target.value }))}
-              style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.85rem', outline: 'none', cursor: form.role === 'Admin' ? 'not-allowed' : 'pointer', opacity: form.role === 'Admin' ? 0.4 : 1 }}
-            >
-              <option value="">Sem área</option>
-              {AREAS_LIST.map(a => <option key={a} value={a}>{a}</option>)}
-            </select>
+              selectedAreas={form.area ? form.area.split(',').map(a => a.trim()).filter(Boolean) : []}
+              onChange={next => setForm(p => ({ ...p, area: next.join(', ') }))}
+            />
           </div>
           {/* New password */}
           <div>
@@ -342,15 +472,11 @@ function AddUserModal({ onClose, onAdd }) {
             {form.role === 'User' && (
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>Área *</label>
-                <select
-                  id="new-user-area"
-                  value={form.area}
-                  onChange={e => setForm(p => ({ ...p, area: e.target.value }))}
-                  style={{ width: '100%', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', cursor: 'pointer', boxSizing: 'border-box' }}
-                >
-                  <option value="">Selecione a área...</option>
-                  {AREAS_LIST.map(a => <option key={a} value={a}>{a}</option>)}
-                </select>
+                <MultiAreaSelector
+                  disabled={false}
+                  selectedAreas={form.area ? form.area.split(',').map(a => a.trim()).filter(Boolean) : []}
+                  onChange={next => setForm(p => ({ ...p, area: next.join(', ') }))}
+                />
               </div>
             )}
           </div>

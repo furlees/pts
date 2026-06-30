@@ -23,17 +23,20 @@ const AREA_NAV = [
 
 // Colour per area for the badge
 const AREA_COLORS = {
-  'Jurídico':              '#8b5cf6',
-  'Parcerias Estratégicas': '#3b82f6',
   'Administrativo':        '#10b981',
-  'Financeiro':            '#f59e0b',
-  'Inovação e Projetos':   '#ec4899',
+  'CEFI':                  '#64748b',
+  'CET':                   '#06b6d4',
+  'Comercial':             '#3b82f6',
   'Comunicação':           '#14b8a6',
-  'CPL':                   '#6366f1',
-  'HUBIZ':                 '#f97316',
-  'Cel40':                 '#64748b',
   'Compras':               '#84cc16',
-  'Eventos e Comunicação': '#06b6d4',
+  'CPL':                   '#6366f1',
+  'Eventos':               '#06b6d4',
+  'Financeiro':            '#f59e0b',
+  'Jurídico':              '#8b5cf6',
+  'Hubiz':                 '#f97316',
+  'Inovação e Projetos':   '#ec4899',
+  'Parcerias Estratégicas': '#3b82f6',
+  'RH':                    '#ec4899',
 };
 
 export default function Sidebar() {
@@ -44,7 +47,7 @@ export default function Sidebar() {
 
   const logoUrl    = theme === 'dark' ? LOGO_DARK : LOGO_LIGHT;
   const navItems   = isAdmin ? ADMIN_NAV : AREA_NAV;
-  const areaColor  = userArea ? (AREA_COLORS[userArea] || 'var(--color-accent)') : null;
+  const areaColor  = userArea ? (AREA_COLORS[userArea.split(',')[0].trim()] || 'var(--color-accent)') : null;
 
   const handleLogout = () => {
     logout();
@@ -67,23 +70,41 @@ export default function Sidebar() {
       </div>
 
       {/* Area badge (only for area users) */}
-      {!isAdmin && userArea && (
-        <div style={{
-          margin: '12px 16px 0',
-          padding: '8px 14px',
-          borderRadius: 'var(--radius-md)',
-          background: `${areaColor}18`,
-          border: `1px solid ${areaColor}40`,
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-        }}>
-          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: areaColor, flexShrink: 0 }} />
-          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: areaColor, lineHeight: 1.3 }}>
-            {userArea}
-          </span>
-        </div>
-      )}
+      {/* Area badge (only for area users) */}
+      {!isAdmin && userArea && (() => {
+        const userAreas = userArea.split(',').map(a => a.trim()).filter(Boolean);
+        return (
+          <div style={{
+            margin: '12px 16px 0',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '6px',
+          }}>
+            {userAreas.map(area => {
+              const col = AREA_COLORS[area] || 'var(--color-accent)';
+              return (
+                <div
+                  key={area}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: 'var(--radius-md)',
+                    background: `${col}12`,
+                    border: `1px solid ${col}25`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: col, flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: col, lineHeight: 1.2 }}>
+                    {area}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* Navigation */}
       <nav className="sidebar-nav">

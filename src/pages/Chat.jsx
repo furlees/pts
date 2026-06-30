@@ -134,26 +134,27 @@ export default function Chat() {
   
   const messagesEndRef = useRef(null);
 
-  // Group messages by session_id front-end side
+  // Group messages by cleaned phone number to avoid duplicates
   const groupedSessions = useMemo(() => {
     const groups = {};
     
     conversations.forEach((msg) => {
-      const sid = msg.session_id || 'unknown';
-      if (!groups[sid]) {
-        groups[sid] = {
-          session_id: sid,
-          displayPhone: cleanPhone(sid),
+      const rawSid = msg.session_id || 'unknown';
+      const cleanSid = cleanPhone(rawSid);
+      if (!groups[cleanSid]) {
+        groups[cleanSid] = {
+          session_id: rawSid,
+          displayPhone: cleanSid,
           rawMessages: [],
           lastDate: msg.date,
           count: 0
         };
       }
-      groups[sid].rawMessages.push(msg);
-      groups[sid].count += 1;
+      groups[cleanSid].rawMessages.push(msg);
+      groups[cleanSid].count += 1;
       
-      if (new Date(msg.date) > new Date(groups[sid].lastDate)) {
-        groups[sid].lastDate = msg.date;
+      if (new Date(msg.date) > new Date(groups[cleanSid].lastDate)) {
+        groups[cleanSid].lastDate = msg.date;
       }
     });
 
@@ -169,7 +170,7 @@ export default function Chat() {
     );
   }, [groupedSessions, searchTerm]);
 
-  const activeSession = groupedSessions.find(s => s.session_id === activeSessionId);
+  const activeSession = groupedSessions.find(s => s.displayPhone === activeSessionId);
   
   const activeMessages = useMemo(() => {
     if (!activeSession) return [];
@@ -256,11 +257,11 @@ export default function Chat() {
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: '0.8rem' }}>Nenhuma conversa encontrada.</div>
             ) : (
               filteredSessions.map((session) => {
-                const isActive = activeSessionId === session.session_id;
+                const isActive = activeSessionId === session.displayPhone;
                 return (
                   <div
-                    key={session.session_id}
-                    onClick={() => setActiveSessionId(session.session_id)}
+                    key={session.displayPhone}
+                    onClick={() => setActiveSessionId(session.displayPhone)}
                     style={{
                       padding: '12px',
                       borderRadius: 'var(--radius-md)',

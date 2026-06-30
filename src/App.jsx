@@ -30,7 +30,7 @@ function AppLayout() {
   const currentPage = pageInfo[location.pathname] || pageInfo['/'];
 
   // Redirect area users away from admin-only pages
-  const adminOnlyPaths = ['/', '/chat', '/leads', '/tickets', '/executivo', '/admin'];
+  const adminOnlyPaths = ['/', '/chat', '/tickets', '/executivo', '/admin'];
   if (!isAdmin && adminOnlyPaths.includes(location.pathname)) {
     return <Navigate to="/minha-area" replace />;
   }

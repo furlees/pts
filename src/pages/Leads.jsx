@@ -1,21 +1,367 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useLeadsData } from '../hooks/useHelenaData';
-import { updateLeadAcuracia, updateTicketStatus } from '../services/helenaService';
-import { Calendar, Search, Download, UserCircle, Building, Briefcase, Mail, Phone, ArrowRight, AlignLeft, User, CheckCircle, XCircle, RotateCcw, Ticket, Clock, Pencil } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { updateLeadAcuracia, updateTicketStatus, fetchMessagesForPhone, updateLeadFields } from '../services/helenaService';
+import { Calendar, Search, Download, UserCircle, Building, Briefcase, Mail, Phone, ArrowRight, AlignLeft, User, CheckCircle, XCircle, RotateCcw, Ticket, Clock, Pencil, History, Send } from 'lucide-react';
+import { db } from '../services/firebase';
+import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
 
 export default function Leads() {
+  const { user, isAdmin, userArea } = useAuth();
   const location = useLocation();
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLeadId, setSelectedLeadId] = useState(null);
-  
+
   const processedDateRange = {
     startDate: dateRange.startDate ? new Date(dateRange.startDate).toISOString() : null,
     endDate: dateRange.endDate ? new Date(dateRange.endDate + 'T23:59:59').toISOString() : null,
   };
 
-  const { leadsList, loading, error, refetch } = useLeadsData(processedDateRange);
+  const { leadsList = [], loading, error, refetch } = useLeadsData(processedDateRange);
+
+  const AREAS_LIST = [
+    'Administrativo', 'CEFI', 'CET', 'Comercial', 'Comunicação',
+    'Compras', 'CPL', 'Eventos', 'Financeiro', 'Jurídico',
+    'Hubiz', 'Inovação e Projetos', 'Parcerias Estratégicas', 'RH',
+  ];
+
+  // Load editing/auditing history for the selected lead
+  const [editHistory, setEditHistory] = useState([]);
+  const [loadingEditHistory, setLoadingEditHistory] = useState(false);
+  const [isEditingLead, setIsEditingLead] = useState(false);
+  const [editForm, setEditForm] = useState({ nome: '', empresa: '', telefone: '', email: '', cargo: '', departamento: '', motivo: '', resumo: '' });
+  const [savingLeadEdits, setSavingLeadEdits] = useState(false);
+
+  useEffect(() => {
+    if (!selectedLeadId) {
+      setEditHistory([]);
+      return;
+    }
+
+    const fetchEditHistory = async () => {
+      if (!db) {
+        console.warn("Firestore db is not initialized.");
+        return;
+      }
+      setLoadingEditHistory(true);
+      try {
+        const q = query(
+          collection(db, 'lead_edits'),
+          where('leadId', '==', selectedLeadId)
+        );
+        const snapshot = await getDocs(q);
+        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        list.sort((a, b) => new Date(b.dataAlteracao) - new Date(a.dataAlteracao));
+        setEditHistory(list);
+      } catch (err) {
+        console.error("Erro ao buscar histórico de auditoria:", err);
+      } finally {
+        setLoadingEditHistory(false);
+      }
+    };
+
+    fetchEditHistory();
+  }, [selectedLeadId]);
+
+  useEffect(() => {
+    const selectedLead = leadsList.find(l => l.id === selectedLeadId) || null;
+    if (selectedLead) {
+      setEditForm({
+        nome: selectedLead.nome || '',
+        empresa: selectedLead.empresa || '',
+        telefone: selectedLead.telefone || '',
+        email: selectedLead.email || '',
+        cargo: selectedLead.cargo || '',
+        departamento: selectedLead.departamento || '',
+        motivo: selectedLead.motivo || '',
+        resumo: selectedLead.resumo || ''
+      });
+      setIsEditingLead(false);
+    } else {
+      setIsEditingLead(false);
+    }
+  }, [selectedLeadId, leadsList]);
+
+  const handleSaveLeadEdits = async () => {
+    const selectedLead = leadsList.find(l => l.id === selectedLeadId) || null;
+    if (!selectedLead) return;
+
+    // Calculate changes
+    const changes = {};
+    const updatedFields = {};
+
+    const fieldsToCheck = ['nome', 'empresa', 'telefone', 'email', 'cargo', 'departamento', 'motivo', 'resumo'];
+    fieldsToCheck.forEach(field => {
+      const oldValue = selectedLead[field] || '';
+      const newValue = editForm[field] || '';
+      if (oldValue !== newValue) {
+        changes[field] = { antes: oldValue, depois: newValue };
+        updatedFields[field] = newValue;
+      }
+    });
+
+    if (Object.keys(changes).length === 0) {
+      setIsEditingLead(false);
+      return;
+    }
+
+    setSavingLeadEdits(true);
+    try {
+      // Save log to Firestore for traceability
+      const auditLog = {
+        leadId: selectedLead.id,
+        leadNome: selectedLead.nome || 'Anônimo',
+        editorNome: user?.name || 'Administrador',
+        editorEmail: user?.email || '',
+        dataAlteracao: new Date().toISOString(),
+        alteracoes: changes
+      };
+
+      if (db) {
+        await addDoc(collection(db, 'lead_edits'), auditLog);
+      }
+
+      // Update in Supabase
+      const res = await updateLeadFields(selectedLead.id, updatedFields);
+      if (res.error) throw res.error;
+
+      // Update local history
+      setEditHistory(prev => [{ id: `local_edit_${Date.now()}`, ...auditLog }, ...prev]);
+
+      await refetch();
+      setIsEditingLead(false);
+    } catch (err) {
+      console.error("Erro ao salvar alterações no lead:", err);
+      alert("Erro ao salvar alterações no banco de dados.");
+    } finally {
+      setSavingLeadEdits(false);
+    }
+  };
+
+  // Forwarding states
+  const [showForwardModal, setShowForwardModal] = useState(false);
+  const [forwardRecipients, setForwardRecipients] = useState('');
+  const [forwardHistory, setForwardHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [sendingForward, setSendingForward] = useState(false);
+
+  // Chat message states
+  const [chatMessages, setChatMessages] = useState([]);
+  const [loadingChat, setLoadingChat] = useState(false);
+  const [includeChatHistory, setIncludeChatHistory] = useState(true);
+
+  // Load WhatsApp chat history for selected lead
+  useEffect(() => {
+    if (!selectedLeadId) {
+      setChatMessages([]);
+      return;
+    }
+
+    const fetchChat = async () => {
+      const selectedLead = leadsList.find(l => l.id === selectedLeadId) || null;
+      if (!selectedLead || !selectedLead.telefone) {
+        setChatMessages([]);
+        return;
+      }
+      setLoadingChat(true);
+      try {
+        const res = await fetchMessagesForPhone(selectedLead.telefone);
+        setChatMessages(res.data || []);
+      } catch (err) {
+        console.error("Erro ao buscar mensagens do WhatsApp:", err);
+      } finally {
+        setLoadingChat(false);
+      }
+    };
+
+    fetchChat();
+  }, [selectedLeadId, leadsList]);
+
+  // Load forwarding history for the selected lead
+  useEffect(() => {
+    if (!selectedLeadId) {
+      setForwardHistory([]);
+      return;
+    }
+
+    const fetchHistory = async () => {
+      if (!db) {
+        console.warn("Firestore db is not initialized.");
+        return;
+      }
+      setLoadingHistory(true);
+      try {
+        const q = query(
+          collection(db, 'lead_forwards'),
+          where('leadId', '==', selectedLeadId)
+        );
+        const snapshot = await getDocs(q);
+        const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Sort in memory by date descending (prevents index requirement crash)
+        list.sort((a, b) => new Date(b.dataEnvio) - new Date(a.dataEnvio));
+        setForwardHistory(list);
+      } catch (err) {
+        console.error("Erro ao buscar histórico de encaminhamentos:", err);
+      } finally {
+        setLoadingHistory(false);
+      }
+    };
+
+    fetchHistory();
+  }, [selectedLeadId]);
+
+  const formatChatMessages = (msgList) => {
+    if (!msgList || msgList.length === 0) return "Nenhuma conversa de WhatsApp encontrada.";
+    
+    return msgList.map(msg => {
+      let raw = msg.message;
+      let sender = 'Lead';
+      let text = '';
+      
+      if (typeof raw === 'string') {
+        if (raw.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.sender === 'bot' || parsed.type === 'bot' || parsed.isBot) {
+              sender = 'Helena';
+            } else {
+              sender = 'Lead';
+            }
+            text = parsed.text || parsed.content || JSON.stringify(parsed);
+          } catch (_) {
+            text = raw;
+          }
+        } else {
+          text = raw;
+        }
+      } else if (raw && typeof raw === 'object') {
+        if (raw.sender === 'bot' || raw.type === 'bot' || raw.isBot) {
+          sender = 'Helena';
+        }
+        text = raw.text || raw.content || JSON.stringify(raw);
+      }
+      
+      // Clean JSON leaks in content
+      if (typeof text === 'string' && text.includes('{"text":')) {
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed.text) text = parsed.text;
+        } catch (_) {}
+      }
+      
+      const time = msg.date ? new Date(msg.date).toLocaleString('pt-BR') : '';
+      return `[${time}] ${sender}: ${text}`;
+    }).join('\n');
+  };
+
+  const handleSendForward = async () => {
+    if (!forwardRecipients.trim()) {
+      alert("Por favor, digite ao menos um destinatário.");
+      return;
+    }
+
+    const emails = forwardRecipients.split(',')
+      .map(e => e.trim())
+      .filter(e => e.includes('@'));
+
+    if (emails.length === 0) {
+      alert("Por favor, informe e-mails válidos.");
+      return;
+    }
+
+    setSendingForward(true);
+    try {
+      const selectedLead = filteredLeads.find(l => l.id === selectedLeadId) || null;
+      if (!selectedLead) return;
+
+      // 1. Save forwarding trace to Firestore
+      const logData = {
+        leadId: selectedLead.id,
+        leadNome: selectedLead.nome || 'Anônimo',
+        destinatarios: emails.join(', '),
+        remetenteNome: user?.name || 'Sistema',
+        remetenteEmail: user?.email || '',
+        dataEnvio: new Date().toISOString(),
+        detalhesLead: {
+          empresa: selectedLead.empresa || '',
+          telefone: selectedLead.telefone || '',
+          email: selectedLead.email || '',
+          cargo: selectedLead.cargo || '',
+          departamento: selectedLead.departamento || '',
+          motivo: selectedLead.motivo || '',
+          resumo: selectedLead.resumo || ''
+        }
+      };
+
+      if (db) {
+        await addDoc(collection(db, 'lead_forwards'), logData);
+      }
+
+      // 2. Compose mailto link and open it
+      const subject = `[Lead PTS] Encaminhamento de Lead - ${selectedLead.nome || 'Anônimo'}`;
+      
+      let body = `Olá,\n\nSegue o encaminhamento dos dados do lead de atendimento do PTS:\n\n` +
+        `• Nome: ${selectedLead.nome || '—'}\n` +
+        `• Empresa: ${selectedLead.empresa || '—'}\n` +
+        `• E-mail: ${selectedLead.email || '—'}\n` +
+        `• Telefone: ${selectedLead.telefone || '—'}\n` +
+        `• Cargo: ${selectedLead.cargo || '—'}\n` +
+        `• Departamento/Área: ${selectedLead.departamento || '—'}\n\n` +
+        `Motivo do Atendimento:\n${selectedLead.motivo || '—'}\n\n` +
+        `Resumo do Atendimento:\n${selectedLead.resumo || '—'}\n\n`;
+
+      if (includeChatHistory) {
+        const transcript = formatChatMessages(chatMessages);
+        body += `=========================================\n` +
+          `HISTÓRICO COMPLETO DA CONVERSA (WHATSAPP):\n` +
+          `=========================================\n` +
+          `${transcript}\n\n`;
+      }
+
+      // Add feedback/approval links for external managers
+      const supportEmail = 'contato@agenciainova.org.br';
+      const correctSubj = `Retorno Acuracia Helena - Ticket #${selectedLead.id}`;
+      const correctBody = `Confirmado. A triagem da Helena para o lead ${selectedLead.nome || 'Anônimo'} atribuído a ${selectedLead.departamento || 'Sem área'} foi CORRETA.`;
+      const correctMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(correctSubj)}&body=${encodeURIComponent(correctBody)}`;
+
+      const incorrectSubj = `Retorno Acuracia Helena - Ticket #${selectedLead.id}`;
+      const incorrectBody = `A triagem da Helena para o lead ${selectedLead.nome || 'Anônimo'} atribuído a ${selectedLead.departamento || 'Sem área'} foi INCORRETA.\n\nO departamento correto deveria ser: [Digite o setor correto aqui]\n`;
+      const incorrectMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(incorrectSubj)}&body=${encodeURIComponent(incorrectBody)}`;
+
+      body += `=========================================\n` +
+        `AVALIAÇÃO DE ACURÁCIA (Ação Externa do Gestor):\n` +
+        `=========================================\n` +
+        `Se você é o gestor responsável e deseja avaliar a acurácia deste atendimento diretamente pelo seu e-mail (sem precisar fazer login na plataforma), clique em uma das opções abaixo:\n\n` +
+        `👉 Acurácia CORRETA: Clique aqui para confirmar o direcionamento\n` +
+        `   ${correctMailto}\n\n` +
+        `👉 Acurácia INCORRETA: Clique aqui para relatar desvio ou corrigir o setor\n` +
+        `   ${incorrectMailto}\n\n` +
+        `-----------------------------------------\n` +
+        `Encaminhado por: ${user?.name || 'Sistema'} (${user?.email || ''})\n` +
+        `Data do Encaminhamento: ${new Date().toLocaleString('pt-BR')}\n`;
+
+      const mailtoUrl = `mailto:${encodeURIComponent(emails.join(','))}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      
+      window.location.href = mailtoUrl;
+
+      // Update local state history
+      setForwardHistory(prev => [{
+        id: `local_${Date.now()}`,
+        ...logData
+      }, ...prev]);
+
+      setShowForwardModal(false);
+      setForwardRecipients('');
+    } catch (err) {
+      console.error("Erro ao registrar encaminhamento:", err);
+      alert("Erro ao salvar histórico de envio no banco de dados.");
+    } finally {
+      setSendingForward(false);
+    }
+  };
+
 
   useEffect(() => {
     // Escuta querystring para auto-pesquisa e auto-seleção
@@ -36,8 +382,10 @@ export default function Leads() {
     }
   }, [location.search, leadsList]);
 
-  // Filter local by search text
+  // Filter local by search text and user area if not admin
   const filteredLeads = leadsList.filter(lead => {
+    if (!isAdmin && userArea && lead.departamento !== userArea) return false;
+    
     if (!searchTerm) return true;
     const searchLower = searchTerm.toLowerCase();
     return (
@@ -62,7 +410,10 @@ export default function Leads() {
   const [ticketSaving, setTicketSaving] = useState(false);
 
   const getTicketStatus = (lead) => {
-    if (ticketLocal[lead.id]) return ticketLocal[lead.id];
+    if (ticketLocal[lead.id]) {
+      if (ticketLocal[lead.id].editing) return null;
+      return ticketLocal[lead.id];
+    }
     if (lead.ticket_status) return { status: lead.ticket_status, justificativa: lead.ticket_justificativa, updated_at: lead.ticket_updated_at };
     return null;
   };
@@ -86,9 +437,20 @@ export default function Leads() {
   const handleEditTicket = () => {
     setTicketMode(null);
     setTicketJustificativa('');
-    // Clear local cache so user can re-choose
     if (selectedLead) {
-      setTicketLocal(prev => { const n = {...prev}; delete n[selectedLead.id]; return n; });
+      setTicketLocal(prev => ({ ...prev, [selectedLead.id]: { editing: true } }));
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setTicketMode(null);
+    setTicketJustificativa('');
+    if (selectedLead) {
+      setTicketLocal(prev => {
+        const n = { ...prev };
+        delete n[selectedLead.id];
+        return n;
+      });
     }
   };
 
@@ -342,12 +704,12 @@ export default function Leads() {
             <div style={{ flex: 1, overflowY: 'auto', padding: '32px' }}>
               
               {/* Header do Detalhe */}
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '32px', paddingBottom: '24px', borderBottom: '1px solid var(--color-border)' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '32px', paddingBottom: '24px', borderBottom: '1px solid var(--color-border)', gap: '16px' }}>
                 <div>
                   <h2 style={{ fontSize: '1.8rem', fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: '8px' }}>
                     {selectedLead.nome || 'Lead Anônimo'}
                   </h2>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center', color: 'var(--color-text-tertiary)' }}>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center', color: 'var(--color-text-tertiary)', flexWrap: 'wrap' }}>
                     <span>Entrou em: {new Date(selectedLead.created_at).toLocaleString('pt-BR')}</span>
                     {selectedLead.departamento && (
                       <>
@@ -359,77 +721,256 @@ export default function Leads() {
                     )}
                   </div>
                 </div>
+
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                  <button
+                    id="btn-encaminhar-lead"
+                    onClick={() => setShowForwardModal(true)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '10px 18px',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'var(--color-accent)',
+                      color: '#fff',
+                      border: 'none',
+                      fontWeight: 700,
+                      fontSize: '0.88rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      flexShrink: 0
+                    }}
+                    onMouseOver={e => e.currentTarget.style.filter = 'brightness(1.1)'}
+                    onMouseOut={e => e.currentTarget.style.filter = 'none'}
+                  >
+                    <Mail size={16} /> Encaminhar Lead
+                  </button>
+
+                  {isAdmin && !isEditingLead && (
+                    <button
+                      id="btn-editar-ficha-lead"
+                      onClick={() => setIsEditingLead(true)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '10px 18px',
+                        borderRadius: 'var(--radius-md)',
+                        border: '1px solid var(--color-border)',
+                        background: 'var(--color-bg-card)',
+                        color: 'var(--color-text-secondary)',
+                        fontWeight: 700,
+                        fontSize: '0.88rem',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        flexShrink: 0
+                      }}
+                      onMouseOver={e => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
+                      onMouseOut={e => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+                    >
+                      <Pencil size={16} /> Editar Ficha
+                    </button>
+                  )}
+                </div>
               </div>
 
-              {/* Grid de Informações Curtas */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '24px', marginBottom: '40px' }}>
-                
-                {/* Contato */}
-                <div style={{ background: 'var(--color-bg-hover)', padding: '20px', borderRadius: 'var(--radius-lg)' }}>
-                  <h4 style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
-                    <User size={16} /> Informações de Contato
-                  </h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <Phone size={14} color="var(--color-text-tertiary)" />
-                      <span style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem' }}>{selectedLead.telefone || 'Não informado'}</span>
+              {isEditingLead ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                  
+                  {/* Grid de Informações Curtas */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '24px' }}>
+                    
+                    {/* Contato */}
+                    <div style={{ background: 'var(--color-bg-hover)', padding: '20px', borderRadius: 'var(--radius-lg)' }}>
+                      <h4 style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                        <User size={16} /> Informações de Contato
+                      </h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div>
+                          <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase' }}>Nome</label>
+                          <input
+                            type="text"
+                            value={editForm.nome}
+                            onChange={e => setEditForm(p => ({ ...p, nome: e.target.value }))}
+                            style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase' }}>Telefone</label>
+                          <input
+                            type="text"
+                            value={editForm.telefone}
+                            onChange={e => setEditForm(p => ({ ...p, telefone: e.target.value }))}
+                            style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase' }}>E-mail</label>
+                          <input
+                            type="email"
+                            value={editForm.email}
+                            onChange={e => setEditForm(p => ({ ...p, email: e.target.value }))}
+                            style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <Mail size={14} color="var(--color-text-tertiary)" />
-                      <span style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem', wordBreak: 'break-all' }}>{selectedLead.email || 'Não informado'}</span>
+
+                    {/* Profissional */}
+                    <div style={{ background: 'var(--color-bg-hover)', padding: '20px', borderRadius: 'var(--radius-lg)' }}>
+                      <h4 style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                        <Briefcase size={16} /> Dados Profissionais & Área
+                      </h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div>
+                          <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase' }}>Empresa</label>
+                          <input
+                            type="text"
+                            value={editForm.empresa}
+                            onChange={e => setEditForm(p => ({ ...p, empresa: e.target.value }))}
+                            style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase' }}>Cargo</label>
+                          <input
+                            type="text"
+                            value={editForm.cargo}
+                            onChange={e => setEditForm(p => ({ ...p, cargo: e.target.value }))}
+                            style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase' }}>Área (Departamento)</label>
+                          <select
+                            value={editForm.departamento}
+                            onChange={e => setEditForm(p => ({ ...p, departamento: e.target.value }))}
+                            style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', cursor: 'pointer', boxSizing: 'border-box' }}
+                          >
+                            <option value="">Sem área definida</option>
+                            {AREAS_LIST.map(a => <option key={a} value={a}>{a}</option>)}
+                          </select>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
 
-                {/* Profissional */}
-                <div style={{ background: 'var(--color-bg-hover)', padding: '20px', borderRadius: 'var(--radius-lg)' }}>
-                  <h4 style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
-                    <Briefcase size={16} /> Dados Profissionais
-                  </h4>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <Building size={14} color="var(--color-text-tertiary)" />
-                      <span style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem' }}>{selectedLead.empresa || 'Não informada'}</span>
+                  </div>
+
+                  {/* Long Texts */}
+                  <div>
+                    <h4 style={{ fontSize: '1.05rem', color: 'var(--color-text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                      <ArrowRight size={18} color="var(--color-accent)" /> Motivo do Contato
+                    </h4>
+                    <textarea
+                      value={editForm.motivo}
+                      onChange={e => setEditForm(p => ({ ...p, motivo: e.target.value }))}
+                      style={{ width: '100%', minHeight: '120px', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.95rem', lineHeight: '1.6', outline: 'none', resize: 'vertical', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  <div>
+                    <h4 style={{ fontSize: '1.05rem', color: 'var(--color-text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                      <AlignLeft size={18} color="var(--color-accent)" /> Resumo Sistematizado da Conversa
+                    </h4>
+                    <textarea
+                      value={editForm.resumo}
+                      onChange={e => setEditForm(p => ({ ...p, resumo: e.target.value }))}
+                      style={{ width: '100%', minHeight: '180px', padding: '16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.95rem', lineHeight: '1.8', outline: 'none', resize: 'vertical', boxSizing: 'border-box' }}
+                    />
+                  </div>
+
+                  {/* Edit Actions */}
+                  <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', paddingTop: '16px', borderTop: '1px solid var(--color-border-light)' }}>
+                    <button
+                      onClick={() => setIsEditingLead(false)}
+                      style={{ padding: '10px 18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-secondary)', fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer' }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={handleSaveLeadEdits}
+                      disabled={savingLeadEdits}
+                      style={{ padding: '10px 22px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.88rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px' }}
+                    >
+                      <CheckCircle size={16} /> {savingLeadEdits ? 'Salvando...' : 'Salvar Alterações'}
+                    </button>
+                  </div>
+
+                </div>
+              ) : (
+                <>
+                  {/* Grid de Informações Curtas */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '24px', marginBottom: '40px' }}>
+                    
+                    {/* Contato */}
+                    <div style={{ background: 'var(--color-bg-hover)', padding: '20px', borderRadius: 'var(--radius-lg)' }}>
+                      <h4 style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                        <User size={16} /> Informações de Contato
+                      </h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <Phone size={14} color="var(--color-text-tertiary)" />
+                          <span style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem' }}>{selectedLead.telefone || 'Não informado'}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <Mail size={14} color="var(--color-text-tertiary)" />
+                          <span style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem', wordBreak: 'break-all' }}>{selectedLead.email || 'Não informado'}</span>
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <UserCircle size={14} color="var(--color-text-tertiary)" />
-                      <span style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem' }}>{selectedLead.cargo || 'Não informado'}</span>
+
+                    {/* Profissional */}
+                    <div style={{ background: 'var(--color-bg-hover)', padding: '20px', borderRadius: 'var(--radius-lg)' }}>
+                      <h4 style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                        <Briefcase size={16} /> Dados Profissionais
+                      </h4>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <Building size={14} color="var(--color-text-tertiary)" />
+                          <span style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem' }}>{selectedLead.empresa || 'Não informada'}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <UserCircle size={14} color="var(--color-text-tertiary)" />
+                          <span style={{ color: 'var(--color-text-primary)', fontSize: '0.95rem' }}>{selectedLead.cargo || 'Não informado'}</span>
+                        </div>
+                      </div>
                     </div>
+
+                  </div>              
+
+                  {/* Blocos Descritivos Longos */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                    
+                    <div>
+                      <h4 style={{ fontSize: '1.05rem', color: 'var(--color-text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                        <ArrowRight size={18} color="var(--color-accent)" /> Motivo do Contato
+                      </h4>
+                      <div style={{ background: 'var(--color-bg-hover)', padding: '24px', borderRadius: 'var(--radius-lg)', color: 'var(--color-text-secondary)', fontSize: '0.95rem', lineHeight: '1.6' }}>
+                        {selectedLead.motivo || <span style={{ fontStyle: 'italic', color: 'var(--color-text-tertiary)' }}>Nenhum motivo específico registrado.</span>}
+                      </div>
+                    </div>
+
+                    <div>
+                      <h4 style={{ fontSize: '1.05rem', color: 'var(--color-text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
+                        <AlignLeft size={18} color="var(--color-accent)" /> Resumo Sistematizado da Conversa
+                      </h4>
+                      <div style={{ background: 'var(--color-bg-inner)', padding: '24px', borderRadius: 'var(--radius-lg)', color: 'var(--color-text-primary)', fontSize: '0.95rem', lineHeight: '1.8', border: '1px solid var(--color-border)', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.05)' }}>
+                        {selectedLead.resumo ? (
+                          selectedLead.resumo.split('\n').map((paragraph, idx) => (
+                            <p key={idx} style={{ marginBottom: idx === selectedLead.resumo.split('\n').length - 1 ? 0 : '16px' }}>
+                              {paragraph}
+                            </p>
+                          ))
+                        ) : (
+                          <span style={{ fontStyle: 'italic', color: 'var(--color-text-tertiary)' }}>O resumo da interação não está disponível.</span>
+                        )}
+                      </div>
+                    </div>
+
                   </div>
-                </div>
-
-              </div>              
-
-              {/* Blocos Descritivos Longos */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-                
-                <div>
-                  <h4 style={{ fontSize: '1.05rem', color: 'var(--color-text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
-                    <ArrowRight size={18} color="var(--color-accent)" /> Motivo do Contato
-                  </h4>
-                  <div style={{ background: 'var(--color-bg-hover)', padding: '24px', borderRadius: 'var(--radius-lg)', color: 'var(--color-text-secondary)', fontSize: '0.95rem', lineHeight: '1.6' }}>
-                    {selectedLead.motivo || <span style={{ fontStyle: 'italic', color: 'var(--color-text-tertiary)' }}>Nenhum motivo específico registrado.</span>}
-                  </div>
-                </div>
-
-                <div>
-                  <h4 style={{ fontSize: '1.05rem', color: 'var(--color-text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 }}>
-                    <AlignLeft size={18} color="var(--color-accent)" /> Resumo Sistematizado da Conversa
-                  </h4>
-                  <div style={{ background: 'var(--color-bg-inner)', padding: '24px', borderRadius: 'var(--radius-lg)', color: 'var(--color-text-primary)', fontSize: '0.95rem', lineHeight: '1.8', border: '1px solid var(--color-border)', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.05)' }}>
-                    {selectedLead.resumo ? (
-                      selectedLead.resumo.split('\n').map((paragraph, idx) => (
-                        <p key={idx} style={{ marginBottom: idx === selectedLead.resumo.split('\n').length - 1 ? 0 : '16px' }}>
-                          {paragraph}
-                        </p>
-                      ))
-                    ) : (
-                      <span style={{ fontStyle: 'italic', color: 'var(--color-text-tertiary)' }}>O resumo da interação não está disponível.</span>
-                    )}
-                  </div>
-                </div>
-
-              </div>
+                </>
+              )}
 
               {/* Box de Acurácia (Avaliação do Gestor) */}
               {selectedLead.departamento && (
@@ -588,6 +1129,15 @@ export default function Leads() {
                           <XCircle size={17} />
                           Não Concluído
                         </button>
+                        {selectedLead.ticket_status && (
+                          <button
+                            className="ticket-btn edit"
+                            onClick={handleCancelEdit}
+                            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                          >
+                            Cancelar
+                          </button>
+                        )}
                       </div>
 
                       {ticketMode === 'nao_concluido' && (
@@ -623,11 +1173,224 @@ export default function Leads() {
                 })()}
               </div>
 
+              {/* Histórico de Alterações (Auditoria) */}
+              {isAdmin && (
+                <div style={{ marginTop: '40px', paddingTop: '32px', borderTop: '1px solid var(--color-border)' }}>
+                  <h4 style={{ fontSize: '1.05rem', color: 'var(--color-text-primary)', marginBottom: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <History size={18} color="var(--color-accent)" /> Histórico de Alterações (Auditoria)
+                  </h4>
+                  
+                  {loadingEditHistory ? (
+                    <div style={{ fontSize: '0.88rem', color: 'var(--color-text-tertiary)' }}>Carregando auditoria...</div>
+                  ) : editHistory.length === 0 ? (
+                    <div style={{ padding: '16px', background: 'var(--color-bg-hover)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', fontSize: '0.85rem', color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
+                      Nenhuma alteração registrada para este lead.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {editHistory.map(log => (
+                        <div
+                          key={log.id}
+                          style={{
+                            background: 'var(--color-bg-hover)',
+                            padding: '16px 20px',
+                            borderRadius: 'var(--radius-md)',
+                            border: '1px solid var(--color-border)',
+                            fontSize: '0.85rem'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: 'var(--color-text-tertiary)', fontSize: '0.78rem' }}>
+                            <span>Alterado por: <strong>{log.editorNome}</strong> ({log.editorEmail})</span>
+                            <span>{new Date(log.dataAlteracao).toLocaleString('pt-BR')}</span>
+                          </div>
+                          
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
+                            {Object.entries(log.alteracoes || {}).map(([campo, diff]) => (
+                              <div key={campo} style={{ color: 'var(--color-text-secondary)', fontSize: '0.82rem' }}>
+                                • Campo <strong style={{ textTransform: 'capitalize' }}>{campo}</strong>: 
+                                <span style={{ color: 'var(--color-error)', textDecoration: 'line-through', marginLeft: '6px' }}>
+                                  "{diff.antes || 'vazio'}"
+                                </span>
+                                <span style={{ color: 'var(--color-text-tertiary)', margin: '0 6px' }}>➔</span>
+                                <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>
+                                  "{diff.depois || 'vazio'}"
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Histórico de Encaminhamentos */}
+              <div style={{ marginTop: '40px', paddingTop: '32px', borderTop: '1px solid var(--color-border)' }}>
+                <h4 style={{ fontSize: '1.05rem', color: 'var(--color-text-primary)', marginBottom: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <History size={18} color="var(--color-accent)" /> Histórico de Encaminhamentos
+                </h4>
+                
+                {loadingHistory ? (
+                  <div style={{ fontSize: '0.88rem', color: 'var(--color-text-tertiary)' }}>Carregando histórico...</div>
+                ) : forwardHistory.length === 0 ? (
+                  <div style={{ padding: '16px', background: 'var(--color-bg-hover)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', fontSize: '0.85rem', color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
+                    Este lead ainda não foi encaminhado por e-mail.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {forwardHistory.map(log => (
+                      <div
+                        key={log.id}
+                        style={{
+                          background: 'var(--color-bg-hover)',
+                          padding: '16px 20px',
+                          borderRadius: 'var(--radius-md)',
+                          border: '1px solid var(--color-border)',
+                          fontSize: '0.85rem'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', color: 'var(--color-text-tertiary)', fontSize: '0.78rem' }}>
+                          <span>Enviado por: <strong>{log.remetenteNome}</strong> ({log.remetenteEmail})</span>
+                          <span>{new Date(log.dataEnvio).toLocaleString('pt-BR')}</span>
+                        </div>
+                        <div style={{ color: 'var(--color-text-primary)' }}>
+                          Destinatários: <strong style={{ color: 'var(--color-accent)' }}>{log.destinatarios}</strong>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
             </div>
           )}
         </div>
 
       </div>
+
+      {/* Modal de Encaminhamento por E-mail */}
+      {showForwardModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px', backdropFilter: 'blur(4px)' }}>
+          <div style={{ background: 'var(--color-bg-card)', borderRadius: 'var(--radius-xl, 16px)', boxShadow: '0 24px 64px rgba(0,0,0,0.3)', width: '100%', maxWidth: '600px', overflow: 'hidden', animation: 'slideDown 0.2s ease-out' }}>
+            
+            {/* Header */}
+            <div style={{ padding: '24px 28px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '38px', height: '38px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Mail size={18} color="#fff" />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--color-text-primary)' }}>Encaminhar Lead por E-mail</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>Envie os dados formatados do lead</p>
+                </div>
+              </div>
+              <button onClick={() => { setShowForwardModal(false); setForwardRecipients(''); }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '4px' }}>
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div style={{ padding: '24px 28px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                
+                {/* Recipients */}
+                <div>
+                  <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>
+                    Destinatários (separe múltiplos por vírgula) *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="exemplo1@agenciainova.org.br, exemplo2@agenciainova.org.br"
+                    value={forwardRecipients}
+                    onChange={e => setForwardRecipients(e.target.value)}
+                    style={{ width: '100%', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                {/* Checkbox to include history */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--color-text-primary)', marginTop: '4px', userSelect: 'none' }}>
+                  <input
+                    type="checkbox"
+                    checked={includeChatHistory}
+                    onChange={e => setIncludeChatHistory(e.target.checked)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <span>Incluir histórico de conversas do WhatsApp ({chatMessages.length} mensagens)</span>
+                </label>
+
+                {/* Email Preview */}
+                {selectedLeadId && (() => {
+                  const lead = filteredLeads.find(l => l.id === selectedLeadId);
+                  if (!lead) return null;
+                  return (
+                    <div>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>
+                        Pré-visualização da Mensagem (E-mail)
+                      </label>
+                      <div style={{
+                        background: 'var(--color-bg-inner)',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: '16px',
+                        fontSize: '0.82rem',
+                        color: 'var(--color-text-secondary)',
+                        maxHeight: '220px',
+                        overflowY: 'auto',
+                        fontFamily: 'monospace',
+                        whiteSpace: 'pre-wrap',
+                        lineHeight: '1.4'
+                      }}>
+                        <strong>Assunto:</strong> [Lead PTS] Encaminhamento de Lead - {lead.nome || 'Anônimo'}{'\n\n'}
+                        Olá,{'\n\n'}
+                        Segue o encaminhamento dos dados do lead de atendimento do PTS:{'\n\n'}
+                        • Nome: {lead.nome || '—'}{'\n'}
+                        • Empresa: {lead.empresa || '—'}{'\n'}
+                        • E-mail: {lead.email || '—'}{'\n'}
+                        • Telefone: {lead.telefone || '—'}{'\n'}
+                        • Cargo: {lead.cargo || '—'}{'\n'}
+                        • Departamento/Área: {lead.departamento || '—'}{'\n\n'}
+                        <strong>Motivo do Atendimento:</strong>{'\n'}{lead.motivo || '—'}{'\n\n'}
+                        <strong>Resumo do Atendimento:</strong>{'\n'}{lead.resumo || '—'}{'\n\n'}
+                        {includeChatHistory && (
+                          <>
+                            <strong>Histórico de Conversas (WhatsApp):</strong>{'\n'}
+                            {formatChatMessages(chatMessages)}{'\n\n'}
+                          </>
+                        )}
+                        <strong>Links de Avaliação (Ação Direta do Gestor):</strong>{'\n'}
+                        👉 Acurácia Correta: mailto:contato@agenciainova.org.br?subject=Retorno...{'\n'}
+                        👉 Acurácia Incorreta: mailto:contato@agenciainova.org.br?subject=Retorno...
+                      </div>
+                    </div>
+                  );
+                })()}
+
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', padding: '16px 28px 24px', borderTop: '1px solid var(--color-border-light)' }}>
+              <button
+                type="button"
+                onClick={() => { setShowForwardModal(false); setForwardRecipients(''); }}
+                style={{ padding: '10px 18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-secondary)', fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer' }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={sendingForward}
+                onClick={handleSendForward}
+                style={{ padding: '10px 22px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.88rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px' }}
+              >
+                <Send size={15} /> {sendingForward ? 'Encaminhando...' : 'Encaminhar'}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }

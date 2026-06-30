@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import {
-  LineChart, Line, BarChart, Bar, RadialBarChart, RadialBar,
+  ComposedChart, Area, LineChart, Line, BarChart, Bar, RadialBarChart, RadialBar,
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, ResponsiveContainer,
 } from 'recharts';
@@ -28,6 +28,11 @@ function fmt(v, unidade) {
 function pct(value, max) {
   if (!max) return 0;
   return Math.min(100, (value / max) * 100);
+}
+
+function getCurvaSPlanejada(index, totalSteps = 12) {
+  const factor = (1 - Math.cos((Math.PI * index) / totalSteps)) / 2;
+  return Number((factor * 100).toFixed(2));
 }
 
 // ── Progress Bar ────────────────────────────────────────────
@@ -65,15 +70,18 @@ function ConceitoBadge({ pctValue, small }) {
 }
 
 // ── Panel wrapper ───────────────────────────────────────────
-function Panel({ children, style = {} }) {
+function Panel({ children, style = {}, ...props }) {
   return (
-    <div style={{
-      background: 'var(--color-bg-card)',
-      border: '1px solid var(--color-border)',
-      borderRadius: 'var(--radius-lg)',
-      boxShadow: 'var(--shadow-sm)',
-      ...style,
-    }}>
+    <div 
+      style={{
+        background: 'var(--color-bg-card)',
+        border: '1px solid var(--color-border)',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-sm)',
+        ...style,
+      }}
+      {...props}
+    >
       {children}
     </div>
   );
@@ -200,7 +208,7 @@ function MetaCard({ meta, cor }) {
 }
 
 // ── Operational KPI Card ────────────────────────────────────
-function KpiCard({ ind, mesSelecionado }) {
+function KpiCard({ ind, mesSelecionado, isActive, onClick }) {
   const valor = ind.valores[mesSelecionado];
   const prevMes = MESES[MESES.indexOf(mesSelecionado) - 1];
   const prevValor = prevMes ? ind.valores[prevMes] : null;
@@ -209,7 +217,17 @@ function KpiCard({ ind, mesSelecionado }) {
   const growing = valor != null && prevValor != null && valor > prevValor;
 
   return (
-    <Panel style={{ padding: '20px' }}>
+    <Panel 
+      onClick={onClick}
+      style={{ 
+        padding: '20px',
+        cursor: 'pointer',
+        border: isActive ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+        transform: isActive ? 'scale(1.02)' : 'none',
+        boxShadow: isActive ? 'var(--shadow-md)' : 'var(--shadow-sm)',
+        transition: 'all 0.2s ease',
+      }}
+    >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
         <p style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-text-secondary)', lineHeight: 1.3, maxWidth: '65%' }}>{ind.nome}</p>
         {valor != null && prevValor != null && (
@@ -313,18 +331,508 @@ function EditModal({ data, onSave, onClose }) {
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '10px 14px', fontSize: '0.82rem', boxShadow: 'var(--shadow-md)' }}>
-      <p style={{ fontWeight: 700, marginBottom: 6, color: 'var(--color-text-primary)' }}>{label}</p>
-      {payload.map(p => (
-        <div key={p.dataKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: p.color, flexShrink: 0 }} />
-          <span style={{ color: 'var(--color-text-secondary)' }}>{p.name}:</span>
-          <span style={{ fontWeight: 700, color: 'var(--color-text-primary)' }}>{p.value?.toFixed(1)}%</span>
-        </div>
-      ))}
+    <div style={{ 
+      background: '#0a2317', 
+      border: '1px solid #164e32', 
+      borderRadius: 'var(--radius-md)', 
+      padding: '10px 14px', 
+      fontSize: '0.82rem', 
+      boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+      color: '#fff' 
+    }}>
+      <p style={{ fontWeight: 700, marginBottom: 6, color: '#fff', textTransform: 'capitalize' }}>{label}</p>
+      {payload.map(p => {
+        let displayColor = p.color;
+        if (p.dataKey === 'curvaS') displayColor = '#94a3b8';
+        if (p.dataKey === 'meta75') displayColor = '#fbbf24';
+        
+        return (
+          <div key={p.dataKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', background: displayColor, flexShrink: 0 }} />
+            <span style={{ color: '#a2c1a9' }}>{p.name}:</span>
+            <span style={{ fontWeight: 700, color: '#fff' }}>
+              {p.value !== null && p.value !== undefined ? `${p.value.toFixed(1)}%` : '—'}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
+
+const renderLegend = (props) => {
+  const { payload } = props;
+  return (
+    <ul style={{ 
+      display: 'flex', 
+      flexWrap: 'wrap', 
+      gap: '12px 18px', 
+      justifyContent: 'center', 
+      listStyle: 'none', 
+      padding: 0, 
+      margin: '12px 0 0 0', 
+      fontSize: '0.82rem' 
+    }}>
+      {payload.map((entry, index) => {
+        let color = entry.color;
+        let labelText = entry.value;
+        let dashArray = 'none';
+        
+        if (entry.dataKey === 'curvaS') {
+          color = '#94a3b8';
+          dashArray = '4 4';
+        } else if (entry.dataKey === 'meta75') {
+          color = '#fbbf24';
+          dashArray = '2 2';
+        } else if (entry.dataKey === 'eixoGeral') {
+          color = '#adff2f';
+        } else if (entry.dataKey === 'eixo1') {
+          color = '#ffffff';
+        } else if (entry.dataKey === 'eixo2') {
+          color = '#22d3ee';
+        } else if (entry.dataKey === 'eixo3') {
+          color = '#fbbf24';
+        } else if (entry.dataKey === 'eixo4') {
+          color = '#ec4899';
+        }
+        
+        return (
+          <li key={`item-${index}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', color: color, fontWeight: 700 }}>
+            <svg width="18" height="6" style={{ display: 'inline-block', flexShrink: 0 }}>
+              <line 
+                x1="0" y1="3" x2="18" y2="3" 
+                stroke={color} 
+                strokeWidth={entry.dataKey === 'eixoGeral' ? 3 : 2} 
+                strokeDasharray={dashArray}
+              />
+            </svg>
+            <span>{labelText}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+};
+
+// ── Operational Dashboard Replication Components & Helpers ──
+
+function findIndicator(data, keywords, defaultId) {
+  if (!data?.indicadoresOperacionais) return null;
+  const match = data.indicadoresOperacionais.find(ind => {
+    const text = `${ind.nome} ${ind.descricao || ''} ${ind.observacao || ''}`.toLowerCase();
+    return keywords.every(kw => text.includes(kw.toLowerCase()));
+  });
+  return match || data.indicadoresOperacionais.find(ind => ind.id === defaultId);
+}
+
+function getIndicatorValue(ind, selectedMonth, cumulative = false) {
+  if (!ind) return 0;
+  if (!cumulative) {
+    return ind.valores[selectedMonth] ?? 0;
+  }
+  let sum = 0;
+  for (const m of MESES) {
+    sum += ind.valores[m] ?? 0;
+    if (m === selectedMonth) break;
+  }
+  return sum;
+}
+
+function getCardValueInfo(data, mes, cardIndex) {
+  if (!data) return { value: '—', sub: '', badge: '', badgeColor: '#ccc' };
+  
+  switch (cardIndex) {
+    case 0: { // Residentes
+      const perm = findIndicator(data, ['residentes', 'permissão'], 'op-20');
+      const conc = findIndicator(data, ['residentes', 'concessão'], 'op-21');
+      const vPerm = getIndicatorValue(perm, mes, false);
+      const vConc = getIndicatorValue(conc, mes, false);
+      return {
+        value: (vPerm + vConc).toLocaleString('pt-BR'),
+        sub: `${vPerm} perm. · ${vConc} conc.`,
+        badge: 'ATIVO',
+        badgeColor: '#adff2f',
+      };
+    }
+    case 1: { // Memberships Ativos
+      const ind = findIndicator(data, ['memberships', 'ativos'], 'op-23');
+      const val = getIndicatorValue(ind, mes, false);
+      return {
+        value: val.toLocaleString('pt-BR'),
+        sub: ind ? `Resp.: ${ind.responsavel || 'Juliana'}` : '—',
+        badge: '▲ META',
+        badgeColor: '#10b981',
+      };
+    }
+    case 2: { // Startups Atendidas
+      const ind = findIndicator(data, ['startups atendidas'], 'op-3');
+      const val = getIndicatorValue(ind, mes, true);
+      return {
+        value: val.toLocaleString('pt-BR'),
+        sub: ind?.observacao || 'Edital Hubiz 2026',
+        badge: '▲ META',
+        badgeColor: '#10b981',
+      };
+    }
+    case 3: { // Eventos Realizados
+      const ind = findIndicator(data, ['eventos realizados'], 'op-13');
+      const val = getIndicatorValue(ind, mes, true);
+      return {
+        value: val.toLocaleString('pt-BR'),
+        sub: ind ? `Resp.: ${ind.responsavel || 'Rebeca'}` : '—',
+        badge: '▲ META',
+        badgeColor: '#10b981',
+      };
+    }
+    case 4: { // Visitantes — Eventos
+      const ind = findIndicator(data, ['visitantes', 'eventos'], 'op-25');
+      const val = getIndicatorValue(ind, mes, true);
+      return {
+        value: val.toLocaleString('pt-BR'),
+        sub: ind ? ind.responsavel || 'Fabrício / Rebeca' : '—',
+        badge: 'MONITORAR',
+        badgeColor: '#3b82f6',
+      };
+    }
+    case 5: { // Visitantes — Portaria
+      const ind = findIndicator(data, ['visitantes', 'portaria'], 'op-26');
+      const val = getIndicatorValue(ind, mes, true);
+      return {
+        value: val.toLocaleString('pt-BR'),
+        sub: ind ? `Resp.: ${ind.responsavel || 'Mariane'}` : '—',
+        badge: 'MONITORAR',
+        badgeColor: '#3b82f6',
+      };
+    }
+    case 6: { // Faturamento Lab
+      const ind = findIndicator(data, ['faturamento', 'laboratório'], 'op-7');
+      const val = getIndicatorValue(ind, mes, true);
+      return {
+        value: fmt(val, 'financeiro'),
+        sub: ind ? `Resp.: ${ind.responsavel || 'Wallace'}` : '—',
+        badge: 'FINANCEIRO',
+        badgeColor: '#fbbf24',
+      };
+    }
+    case 7: { // Faturamento Memberships
+      const ind = findIndicator(data, ['memberships', 'faturamento'], 'op-8');
+      const val = getIndicatorValue(ind, mes, true);
+      return {
+        value: fmt(val, 'financeiro'),
+        sub: ind ? `Resp.: ${ind.responsavel || 'Juliana'}` : '—',
+        badge: 'FINANCEIRO',
+        badgeColor: '#fbbf24',
+      };
+    }
+    case 8: { // Inovação Aplicada
+      const ind1 = findIndicator(data, ['valores aplicados em inovação', 'mariane'], 'op-19');
+      const ind2 = findIndicator(data, ['valores aplicados em inovação', 'priscilla'], 'op-18');
+      const val1 = getIndicatorValue(ind1, mes, true);
+      const val2 = getIndicatorValue(ind2, mes, true);
+      return {
+        value: fmt(val1 + val2, 'financeiro'),
+        sub: 'Capacita + Conecta',
+        badge: 'META B',
+        badgeColor: '#10b981',
+      };
+    }
+    case 9: { // Projetos Lab
+      const ivan = findIndicator(data, ['número de projetos - laboratório', 'ivan'], 'op-5');
+      const wall = findIndicator(data, ['número de projetos - laboratório', 'wallace'], 'op-6');
+      const vIvan = getIndicatorValue(ivan, mes, true);
+      const vWall = getIndicatorValue(wall, mes, true);
+      return {
+        value: vIvan.toLocaleString('pt-BR'),
+        sub: `${vWall} convertidos em pedido`,
+        badge: 'META A',
+        badgeColor: '#10b981',
+      };
+    }
+    default:
+      return { value: '—', sub: '', badge: '', badgeColor: '#ccc' };
+  }
+}
+
+function getEixoSubtext(data, eixoId, mes) {
+  if (!data) return '';
+  const e = data.eixos?.find(x => x.id === eixoId);
+  if (!e) return '';
+  
+  const vFev = e.progressoMensal['fev'] ?? 0;
+  const vMar = e.progressoMensal['mar'] ?? 0;
+  
+  const valDest = findIndicator(data, ['valores destinados', `eixo ${eixoId}`], `op-${13 + eixoId}`);
+  const faturamento = getIndicatorValue(valDest, mes, false);
+  
+  return `Fev: ${vFev.toFixed(2)}% - Mar: ${vMar.toFixed(2)}% | ${fmt(faturamento, 'financeiro')}`;
+}
+
+function getEvolutionChartData(data, keywords, defaultId, isSumOfTwo = false, secondKeywords = [], secondDefaultId = '') {
+  if (!data) return [];
+  const ind1 = findIndicator(data, keywords, defaultId);
+  const ind2 = isSumOfTwo ? findIndicator(data, secondKeywords, secondDefaultId) : null;
+  
+  const mesesOrdenados = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const labels = {
+    jan: 'Jan', fev: 'Fev', mar: 'Mar', abr: 'Abr', mai: 'Mai', jun: 'Jun',
+    jul: 'Jul', ago: 'Ago', set: 'Set', out: 'Out', nov: 'Nov', dez: 'Dez'
+  };
+  
+  let cumulativeSum = 0;
+  return mesesOrdenados.map(m => {
+    const v1 = ind1 ? (ind1.valores[m] ?? 0) : 0;
+    const v2 = ind2 ? (ind2.valores[m] ?? 0) : 0;
+    const monthlyVal = v1 + v2;
+    cumulativeSum += monthlyVal;
+    return {
+      mes: labels[m],
+      mensal: monthlyVal,
+      acumulado: cumulativeSum,
+    };
+  });
+}
+
+function getLargeScurveData(data) {
+  if (!data) return [];
+  const mesesOrdenados = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const labels = {
+    jan: 'Jan', fev: 'Fev', mar: 'Mar', abr: 'Abr', mai: 'Mai', jun: 'Jun',
+    jul: 'Jul', ago: 'Ago', set: 'Set', out: 'Out', nov: 'Nov', dez: 'Dez'
+  };
+  
+  return mesesOrdenados.map((m, idx) => {
+    let planned = 0;
+    if (m === 'dez') {
+      planned = 75.00;
+    } else if (m !== 'jan') {
+      planned = data.metaGlobalAcumulada?.[m] ?? (idx * (75 / 11));
+    }
+    
+    const realized = m === 'jan' ? 0 : (data.progressoGeral?.[m] ?? 0);
+    
+    return {
+      mes: labels[m],
+      planejado: planned,
+      realizado: realized,
+      meta75: 75,
+    };
+  });
+}
+
+function getMiniScurveData(data) {
+  if (!data) return [];
+  const mesesOrdenados = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const labels = {
+    jan: 'Jan', fev: 'Fev', mar: 'Mar', abr: 'Abr', mai: 'Mai', jun: 'Jun',
+    jul: 'Jul', ago: 'Ago', set: 'Set', out: 'Out', nov: 'Nov', dez: 'Dez'
+  };
+  
+  const e1 = data.eixos?.find(e => e.id === 1);
+  const e2 = data.eixos?.find(e => e.id === 2);
+  const e3 = data.eixos?.find(e => e.id === 3);
+  const e4 = data.eixos?.find(e => e.id === 4);
+  
+  return mesesOrdenados.map((m, idx) => {
+    let planned = 0;
+    if (m === 'dez') {
+      planned = 75.00;
+    } else if (m !== 'jan') {
+      planned = data.metaGlobalAcumulada?.[m] ?? (idx * (75 / 11));
+    }
+    
+    return {
+      mes: labels[m],
+      planned,
+      e1_real: m === 'jan' ? 0 : (e1?.progressoMensal?.[m] ?? 0),
+      e2_real: m === 'jan' ? 0 : (e2?.progressoMensal?.[m] ?? 0),
+      e3_real: m === 'jan' ? 0 : (e3?.progressoMensal?.[m] ?? 0),
+      e4_real: m === 'jan' ? 0 : (e4?.progressoMensal?.[m] ?? 0),
+    };
+  });
+}
+
+function KpiCardNew({ title, valInfo }) {
+  return (
+    <div style={{
+      background: '#0d3221',
+      border: '1px solid #164e32',
+      borderRadius: 'var(--radius-lg)',
+      padding: '16px 20px',
+      textAlign: 'center',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      minHeight: '145px',
+      boxShadow: 'var(--shadow-sm)',
+    }}>
+      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#a2c1a9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</span>
+      <span style={{ fontSize: '1.9rem', fontWeight: 800, color: '#ffffff', margin: '6px 0 2px 0' }}>{valInfo.value}</span>
+      <span style={{ fontSize: '0.78rem', color: '#a2c1a9', marginBottom: '8px', minHeight: '1.2em' }}>{valInfo.sub}</span>
+      <span style={{
+        padding: '2px 8px',
+        borderRadius: '4px',
+        fontSize: '0.68rem',
+        fontWeight: 800,
+        background: `${valInfo.badgeColor}15`,
+        color: valInfo.badgeColor,
+        border: `1px solid ${valInfo.badgeColor}35`,
+        textTransform: 'uppercase',
+      }}>{valInfo.badge}</span>
+    </div>
+  );
+}
+
+function EixoProgressNew({ title, val, sub }) {
+  return (
+    <div style={{
+      background: '#0d3221',
+      border: '1px solid #164e32',
+      borderRadius: 'var(--radius-lg)',
+      padding: '14px 18px',
+      boxShadow: 'var(--shadow-sm)',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'space-between',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+        <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#ffffff' }}>{title}</span>
+        <span style={{ fontSize: '1.15rem', fontWeight: 800, color: '#adff2f' }}>{val.toFixed(2)}%</span>
+      </div>
+      <ProgressBar value={val} color="#adff2f" height={7} style={{ marginBottom: '6px' }} />
+      <div style={{ fontSize: '0.7rem', color: '#a2c1a9' }}>{sub}</div>
+    </div>
+  );
+}
+
+function EvolutionMiniChart({ title, chartData, color, selectedMonth, unit }) {
+  const mesesAbrev = {
+    jan: 'Jan', fev: 'Fev', mar: 'Mar', abr: 'Abr', mai: 'Mai', jun: 'Jun',
+    jul: 'Jul', ago: 'Ago', set: 'Set', out: 'Out', nov: 'Nov', dez: 'Dez'
+  };
+  const activeMonthLabel = mesesAbrev[selectedMonth];
+  const activePoint = chartData.find(pt => pt.mes === activeMonthLabel);
+  const currentAcumulado = activePoint ? activePoint.acumulado : 0;
+  
+  let displayVal = fmt(currentAcumulado, unit);
+  if (unit === 'financeiro' && currentAcumulado >= 1000) {
+    displayVal = `R$ ${(currentAcumulado / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}k`;
+  }
+  
+  return (
+    <div style={{
+      background: '#0d3221',
+      border: '1px solid #164e32',
+      borderRadius: 'var(--radius-lg)',
+      padding: '16px 20px',
+      boxShadow: 'var(--shadow-sm)',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
+        <div>
+          <h4 style={{ fontSize: '0.85rem', fontWeight: 700, color: '#ffffff', lineHeight: 1.2 }}>{title}</h4>
+          <span style={{ fontSize: '0.68rem', color: '#a2c1a9' }}>Jan-Dez 2026</span>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: '1.3rem', fontWeight: 800, color: color }}>
+            {displayVal}
+          </div>
+          <span style={{ fontSize: '0.62rem', color: '#a2c1a9', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.05em' }}>▲ Acumulado</span>
+        </div>
+      </div>
+      
+      <ResponsiveContainer width="100%" height={150}>
+        <ComposedChart data={chartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#144e31" vertical={false} />
+          <XAxis dataKey="mes" tick={{ fontSize: 9, fill: '#a2c1a9' }} axisLine={false} tickLine={false} />
+          <YAxis tick={{ fontSize: 9, fill: '#a2c1a9' }} axisLine={false} tickLine={false} />
+          <Tooltip 
+            contentStyle={{ background: '#0a2317', border: '1px solid #164e32', borderRadius: 6, fontSize: '0.75rem', color: '#fff' }}
+            labelFormatter={(label) => `Mês: ${label}`}
+            formatter={(value, name) => [fmt(value, unit), name === 'mensal' ? 'Mensal' : 'Acumulado']}
+          />
+          <Bar dataKey="mensal" name="mensal" fill={color} opacity={0.3} radius={[2, 2, 0, 0]} barSize={12} />
+          <Line type="monotone" dataKey="acumulado" name="acumulado" stroke={color} strokeWidth={2.5} dot={{ r: 3, fill: color }} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function EixoMetaCard({ title, val }) {
+  return (
+    <div style={{
+      background: '#0d3221',
+      border: '1px solid #164e32',
+      borderRadius: 'var(--radius-lg)',
+      padding: '16px 20px',
+      textAlign: 'center',
+      boxShadow: 'var(--shadow-sm)',
+    }}>
+      <span style={{ fontSize: '1.9rem', fontWeight: 800, color: '#adff2f', display: 'block', marginBottom: '4px' }}>{val.toFixed(2)}%</span>
+      <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#ffffff', display: 'block', marginBottom: '2px' }}>{title} — Executado</span>
+      <span style={{ fontSize: '0.7rem', color: '#a2c1a9' }}>Meta dez: 75%</span>
+    </div>
+  );
+}
+
+const renderScurveLegend = () => (
+  <ul style={{ display: 'flex', gap: 16, justifyContent: 'flex-end', listStyle: 'none', padding: 0, margin: '8px 0 0 0', fontSize: '0.78rem', color: '#a2c1a9' }}>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ width: 14, height: 3, background: '#adff2f' }} />
+      <span>Planejado (Curva S)</span>
+    </li>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ width: 14, height: 3, background: '#22d3ee' }} />
+      <span>Realizado</span>
+    </li>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ width: 14, height: 1, borderTop: '2px dotted #fbbf24' }} />
+      <span>Meta 75%</span>
+    </li>
+  </ul>
+);
+
+const renderEixo12Legend = () => (
+  <ul style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', listStyle: 'none', padding: 0, margin: '8px 0 0 0', fontSize: '0.7rem', color: '#a2c1a9' }}>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ width: 12, height: 1, borderTop: '2px dashed #adff2f' }} />
+      <span>E1 plan</span>
+    </li>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ width: 12, height: 2, background: '#adff2f' }} />
+      <span>E1 real</span>
+    </li>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ width: 12, height: 1, borderTop: '2px dashed #22d3ee' }} />
+      <span>E2 plan</span>
+    </li>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ width: 12, height: 2, background: '#22d3ee' }} />
+      <span>E2 real</span>
+    </li>
+  </ul>
+);
+
+const renderEixo34Legend = () => (
+  <ul style={{ display: 'flex', gap: 12, justifyContent: 'flex-end', listStyle: 'none', padding: 0, margin: '8px 0 0 0', fontSize: '0.7rem', color: '#a2c1a9' }}>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ width: 12, height: 1, borderTop: '2px dashed #fbbf24' }} />
+      <span>E3 plan</span>
+    </li>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ width: 12, height: 2, background: '#fbbf24' }} />
+      <span>E3 real</span>
+    </li>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ width: 12, height: 1, borderTop: '2px dashed #f97316' }} />
+      <span>E4 plan</span>
+    </li>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ width: 12, height: 2, background: '#f97316' }} />
+      <span>E4 real</span>
+    </li>
+  </ul>
+);
 
 // ════════════════════════════════════════════════════════════
 // MAIN PAGE
@@ -338,6 +846,10 @@ export default function ExecutivoDashboard() {
   const [editModal, setEditModal] = useState(false);
   const [importModal, setImportModal] = useState(false);
   const [mesSel, setMesSel]       = useState('abr');
+  const [selectedOpInd, setSelectedOpInd] = useState(null);
+
+  const activeOpIndId = selectedOpInd || data?.indicadoresOperacionais[0]?.id;
+  const activeOpInd = data?.indicadoresOperacionais.find(i => i.id === activeOpIndId);
 
   const handleSaveEdit = useCallback((newData) => {
     exec.saveEdited(newData);
@@ -346,16 +858,34 @@ export default function ExecutivoDashboard() {
   // ── Chart data ───────────────────────────────────────────
   const evolucaoData = useMemo(() => {
     if (!data) return [];
-    return MESES
-      .filter(m => data.eixos.some(e => e.progressoMensal[m] !== null))
-      .map(m => ({
-        mes: MESES_LABEL[m],
+    
+    // Marco zero: jan (Jan/26) com valores zerados para progresso acumulado
+    const startPoint = {
+      mes: 'jan',
+      eixoGeral: 0,
+      eixo1: null,
+      eixo2: null,
+      eixo3: null,
+      eixo4: null,
+      curvaS: 0,
+      meta75: 75,
+    };
+    
+    const points = MESES.map((m, idx) => {
+      const step = idx + 1;
+      return {
+        mes: m,
+        eixoGeral: data.progressoGeral?.[m],
         eixo1: data.eixos[0]?.progressoMensal[m],
         eixo2: data.eixos[1]?.progressoMensal[m],
         eixo3: data.eixos[2]?.progressoMensal[m],
         eixo4: data.eixos[3]?.progressoMensal[m],
-        meta:  data.metaGlobalAcumulada?.[m],
-      }));
+        curvaS: getCurvaSPlanejada(step),
+        meta75: 75,
+      };
+    });
+    
+    return [startPoint, ...points];
   }, [data]);
 
   const eixoSelecionado = data?.eixos.find(e => e.id === eixoAtivo);
@@ -382,19 +912,61 @@ export default function ExecutivoDashboard() {
   // Operational chart (normalized %)
   const opChartData = useMemo(() => {
     if (!data) return [];
-    return MESES
-      .filter(m => data.indicadoresOperacionais.some(i => i.valores[m] !== null))
-      .map(m => {
-        const row = { mes: MESES_LABEL[m] };
-        data.indicadoresOperacionais.forEach(ind => {
-          const v = ind.valores[m];
-          row[ind.id] = v != null ? pct(v, ind.meta) : null;
-        });
-        return row;
+    
+    const startPoint = {
+      mes: 'jan',
+      curvaS: 0,
+      meta75: 75,
+    };
+    data.indicadoresOperacionais.forEach(ind => {
+      startPoint[ind.id] = 0;
+    });
+    
+    const points = MESES.map((m, idx) => {
+      const step = idx + 1;
+      const row = {
+        mes: m,
+        curvaS: getCurvaSPlanejada(step),
+        meta75: 75,
+      };
+      data.indicadoresOperacionais.forEach(ind => {
+        const v = ind.valores[m];
+        row[ind.id] = v != null ? pct(v, ind.meta) : null;
       });
+      return row;
+    });
+    
+    return [startPoint, ...points];
   }, [data]);
 
   const OP_COLORS = ['#3b82f6','#10b981','#8b5cf6','#f59e0b','#ec4899','#14b8a6'];
+
+
+  // Operational dashboard replication data
+  const replicatedData = useMemo(() => {
+    if (!data) return null;
+    
+    const largeScurve = getLargeScurveData(data);
+    const miniScurves = getMiniScurveData(data);
+    
+    const evEventos = getEvolutionChartData(data, ['eventos realizados'], 'op-13', false);
+    const evStartups = getEvolutionChartData(data, ['startups atendidas'], 'op-3', false);
+    const evProjetos = getEvolutionChartData(data, ['número de projetos - laboratório', 'ivan'], 'op-5', false);
+    const evVisitantesEventos = getEvolutionChartData(data, ['visitantes', 'eventos'], 'op-25', false);
+    const evVisitantesPortaria = getEvolutionChartData(data, ['visitantes', 'portaria'], 'op-26', false);
+    const evInovacao = getEvolutionChartData(data, ['valores aplicados em inovação', 'mariane'], 'op-19', true, ['valores aplicados em inovação', 'priscilla'], 'op-18');
+    
+    return {
+      largeScurve,
+      miniScurves,
+      evEventos,
+      evStartups,
+      evProjetos,
+      evVisitantesEventos,
+      evVisitantesPortaria,
+      evInovacao,
+    };
+  }, [data]);
 
   // ── Estado de carregamento ───────────────────────────────
   if (exec.loading || !data) {
@@ -539,20 +1111,46 @@ export default function ExecutivoDashboard() {
           </div>
 
           {/* Section 2 — Linha temporal */}
-          <Panel style={{ padding: '20px 24px' }}>
-            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 20 }}>Evolução Mensal dos Eixos</h3>
+          <Panel style={{ 
+            padding: '20px 24px', 
+            background: '#0d3221', 
+            borderColor: '#164e32',
+            boxShadow: 'var(--shadow-md)'
+          }}>
+            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#ffffff', marginBottom: 20 }}>Evolução Mensal dos Eixos</h3>
             <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={evolucaoData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" />
-                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: 'var(--color-text-tertiary)' }} />
-                <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }} domain={[0, 60]} />
+              <ComposedChart data={evolucaoData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#144e31" />
+                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: '#a2c1a9' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#a2c1a9' }} domain={[0, 100]} />
                 <Tooltip content={<ChartTooltip />} />
-                <Legend wrapperStyle={{ fontSize: '0.8rem' }} />
-                {data.eixos.map(e => (
-                  <Line key={e.id} type="monotone" dataKey={`eixo${e.id}`} name={`Eixo ${e.id} — ${e.nomeAbrev}`} stroke={EIXO_CORES[e.id]} strokeWidth={2.5} dot={{ r: 4, fill: EIXO_CORES[e.id] }} connectNulls={false} />
-                ))}
-                <Line type="monotone" dataKey="meta" name="Meta Acumulada" stroke="#94a3b8" strokeWidth={1.5} strokeDasharray="5 5" dot={false} connectNulls={false} />
-              </LineChart>
+                <Legend content={renderLegend} />
+                
+                {/* Eixo Geral (Area + Line) */}
+                <Area 
+                  type="monotone" 
+                  dataKey="eixoGeral" 
+                  name="Eixo Geral" 
+                  stroke="#adff2f" 
+                  strokeWidth={3} 
+                  fill="rgba(173, 255, 47, 0.15)" 
+                  dot={{ r: 4, fill: '#adff2f' }} 
+                  activeDot={{ r: 6 }} 
+                  connectNulls={false} 
+                />
+                
+                {/* Eixos 1 a 4 */}
+                <Line type="monotone" dataKey="eixo1" name="Eixo 1" stroke="#ffffff" strokeWidth={2.5} dot={{ r: 4, fill: '#ffffff' }} connectNulls={false} />
+                <Line type="monotone" dataKey="eixo2" name="Eixo 2" stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 4, fill: '#22d3ee' }} connectNulls={false} />
+                <Line type="monotone" dataKey="eixo3" name="Eixo 3" stroke="#fbbf24" strokeWidth={2.5} dot={{ r: 4, fill: '#fbbf24' }} connectNulls={false} />
+                <Line type="monotone" dataKey="eixo4" name="Eixo 4" stroke="#ec4899" strokeWidth={2.5} dot={{ r: 4, fill: '#ec4899' }} connectNulls={false} />
+                
+                {/* Curva S planejada */}
+                <Line type="monotone" dataKey="curvaS" name="Curva S planejada" stroke="#94a3b8" strokeWidth={2} strokeDasharray="4 4" dot={false} connectNulls={false} />
+                
+                {/* Meta 75% (dez) */}
+                <Line type="monotone" dataKey="meta75" name="Meta 75% (dez)" stroke="#fbbf24" strokeWidth={2} strokeDasharray="2 2" dot={false} connectNulls={false} />
+              </ComposedChart>
             </ResponsiveContainer>
           </Panel>
 
@@ -662,8 +1260,11 @@ export default function ExecutivoDashboard() {
       {/* ══════════════════════════════════════════════ */}
       {/* TAB OPERACIONAL                               */}
       {/* ══════════════════════════════════════════════ */}
-      {activeTab === 'operacional' && (
-        <>
+      {/* ══════════════════════════════════════════════ */}
+      {/* TAB OPERACIONAL                               */}
+      {/* ══════════════════════════════════════════════ */}
+      {activeTab === 'operacional' && replicatedData && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
           {/* Filter + edit bar */}
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -692,59 +1293,166 @@ export default function ExecutivoDashboard() {
             )}
           </div>
 
-          {/* KPI grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-            {data.indicadoresOperacionais.map(ind => (
-              <KpiCard key={ind.id} ind={ind} mesSelecionado={mesSel} />
-            ))}
+          {/* SECTION 1: RESUMO DE RESULTADOS */}
+          <div>
+            <h2 style={{ fontSize: '0.85rem', fontWeight: 800, color: '#7bc650', letterSpacing: '0.08em', textTransform: 'uppercase', borderBottom: '1px solid #164e32', paddingBottom: '8px', marginBottom: '16px' }}>
+              Resumo de Resultados — Acumulado 2026
+            </h2>
+            
+            {/* KPI Cards Row 1 (6 columns) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 12 }}>
+              <KpiCardNew title="Residentes" valInfo={getCardValueInfo(data, mesSel, 0)} />
+              <KpiCardNew title="Memberships Ativos" valInfo={getCardValueInfo(data, mesSel, 1)} />
+              <KpiCardNew title="Startups Atendidas" valInfo={getCardValueInfo(data, mesSel, 2)} />
+              <KpiCardNew title="Eventos Realizados" valInfo={getCardValueInfo(data, mesSel, 3)} />
+              <KpiCardNew title="Visitantes — Eventos" valInfo={getCardValueInfo(data, mesSel, 4)} />
+              <KpiCardNew title="Visitantes — Portaria" valInfo={getCardValueInfo(data, mesSel, 5)} />
+            </div>
+
+            {/* KPI Cards Row 2 (4 columns) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12, marginBottom: 20 }}>
+              <KpiCardNew title="Faturamento Lab" valInfo={getCardValueInfo(data, mesSel, 6)} />
+              <KpiCardNew title="Faturamento Memberships" valInfo={getCardValueInfo(data, mesSel, 7)} />
+              <KpiCardNew title="Inovação Aplicada" valInfo={getCardValueInfo(data, mesSel, 8)} />
+              <KpiCardNew title="Projetos Lab" valInfo={getCardValueInfo(data, mesSel, 9)} />
+            </div>
+
+            {/* Eixo Progress Bars Row 3 */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+              <EixoProgressNew title="EIXO 1" val={data.eixos[0]?.progressoMensal[mesSel] ?? 0} sub={getEixoSubtext(data, 1, mesSel)} />
+              <EixoProgressNew title="EIXO 2" val={data.eixos[1]?.progressoMensal[mesSel] ?? 0} sub={getEixoSubtext(data, 2, mesSel)} />
+              <EixoProgressNew title="EIXO 3" val={data.eixos[2]?.progressoMensal[mesSel] ?? 0} sub={getEixoSubtext(data, 3, mesSel)} />
+              <EixoProgressNew title="EIXO 4" val={data.eixos[3]?.progressoMensal[mesSel] ?? 0} sub={getEixoSubtext(data, 4, mesSel)} />
+            </div>
           </div>
 
-          {/* Trend chart */}
-          <Panel style={{ padding: '20px 24px' }}>
-            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 20 }}>
-              Evolução dos Indicadores (% da Meta)
-            </h3>
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={opChartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" />
-                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: 'var(--color-text-tertiary)' }} />
-                <YAxis tickFormatter={v => `${v.toFixed(0)}%`} tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }} domain={[0, 110]} />
-                <Tooltip content={<ChartTooltip />} />
-                <Legend wrapperStyle={{ fontSize: '0.78rem' }} />
-                {data.indicadoresOperacionais.map((ind, i) => (
-                  <Line key={ind.id} type="monotone" dataKey={ind.id} name={ind.nome} stroke={OP_COLORS[i % OP_COLORS.length]} strokeWidth={2} dot={{ r: 4 }} connectNulls={false} />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </Panel>
+          {/* SECTION 2: EVOLUÇÃO MENSAL DE INDICADORES */}
+          <div>
+            <h2 style={{ fontSize: '0.85rem', fontWeight: 800, color: '#7bc650', letterSpacing: '0.08em', textTransform: 'uppercase', borderBottom: '1px solid #164e32', paddingBottom: '8px', marginBottom: '16px' }}>
+              Evolução Mensal de Indicadores
+            </h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: 12 }}>
+              <EvolutionMiniChart title="Eventos Realizados" chartData={replicatedData.evEventos} color="#adff2f" selectedMonth={mesSel} unit="numero" />
+              <EvolutionMiniChart title="Startups Atendidas" chartData={replicatedData.evStartups} color="#adff2f" selectedMonth={mesSel} unit="numero" />
+              <EvolutionMiniChart title="Projetos Lab" chartData={replicatedData.evProjetos} color="#3b82f6" selectedMonth={mesSel} unit="numero" />
+              <EvolutionMiniChart title="Visitantes — Eventos" chartData={replicatedData.evVisitantesEventos} color="#3b82f6" selectedMonth={mesSel} unit="numero" />
+              <EvolutionMiniChart title="Visitantes — Portaria" chartData={replicatedData.evVisitantesPortaria} color="#3b82f6" selectedMonth={mesSel} unit="numero" />
+              <EvolutionMiniChart title="Inovação Aplicada (R$)" chartData={replicatedData.evInovacao} color="#fbbf24" selectedMonth={mesSel} unit="financeiro" />
+            </div>
+          </div>
 
-          {/* Summary bar chart */}
-          <Panel style={{ padding: '20px 24px' }}>
-            <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 20 }}>
-              Alcance de Meta — {MESES_LABEL[mesSel]}
-            </h3>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart
-                data={data.indicadoresOperacionais.map((ind, i) => ({
-                  nome: ind.nome.length > 20 ? ind.nome.slice(0, 20) + '…' : ind.nome,
-                  alcance: ind.valores[mesSel] != null ? pct(ind.valores[mesSel], ind.meta) : 0,
-                  cor: OP_COLORS[i % OP_COLORS.length],
-                }))}
-                margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border-light)" vertical={false} />
-                <XAxis dataKey="nome" tick={{ fontSize: 10, fill: 'var(--color-text-tertiary)' }} />
-                <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 11, fill: 'var(--color-text-tertiary)' }} domain={[0, 100]} />
-                <Tooltip formatter={(v) => [`${v.toFixed(1)}%`, 'Alcance']} contentStyle={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: '0.82rem' }} />
-                <Bar dataKey="alcance" name="Alcance da Meta" radius={[4, 4, 0, 0]}>
-                  {data.indicadoresOperacionais.map((_, i) => (
-                    <Cell key={i} fill={OP_COLORS[i % OP_COLORS.length]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </Panel>
-        </>
+          {/* SECTION 3: METAS 2026 – CURVA S & ACOMPANHAMENTO */}
+          <div>
+            <h2 style={{ fontSize: '0.85rem', fontWeight: 800, color: '#7bc650', letterSpacing: '0.08em', textTransform: 'uppercase', borderBottom: '1px solid #164e32', paddingBottom: '8px', marginBottom: '16px' }}>
+              Metas 2026 — Curva S & Acompanhamento
+            </h2>
+            
+            {/* Eixo Meta cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12, marginBottom: 16 }}>
+              <EixoMetaCard title="Eixo 1" val={data.eixos[0]?.progressoMensal[mesSel] ?? 0} />
+              <EixoMetaCard title="Eixo 2" val={data.eixos[1]?.progressoMensal[mesSel] ?? 0} />
+              <EixoMetaCard title="Eixo 3" val={data.eixos[2]?.progressoMensal[mesSel] ?? 0} />
+              <EixoMetaCard title="Eixo 4" val={data.eixos[3]?.progressoMensal[mesSel] ?? 0} />
+            </div>
+
+            {/* Large S-Curve Chart */}
+            <Panel style={{ 
+              padding: '20px 24px', 
+              background: '#0d3221', 
+              borderColor: '#164e32',
+              boxShadow: 'var(--shadow-md)',
+              marginBottom: 14
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+                <div>
+                  <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#ffffff', lineHeight: 1.2 }}>
+                    Curva S — Execução do Contrato de Gestão 2026
+                  </h3>
+                  <span style={{ fontSize: '0.72rem', color: '#a2c1a9' }}>Planejado (Curva S) x Realizado x Meta 75% em Dezembro</span>
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={320}>
+                <ComposedChart data={replicatedData.largeScurve} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#144e31" />
+                  <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#a2c1a9' }} />
+                  <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 11, fill: '#a2c1a9' }} domain={[0, 80]} />
+                  <Tooltip 
+                    contentStyle={{ background: '#0a2317', border: '1px solid #164e32', borderRadius: 8, fontSize: '0.8rem', color: '#fff' }}
+                    labelFormatter={(label) => `Mês: ${label}`}
+                    formatter={(value) => [`${value.toFixed(2)}%`, 'Progresso']}
+                  />
+                  <Legend content={renderScurveLegend} />
+                  <Line type="monotone" dataKey="planejado" name="Planejado (Curva S)" stroke="#adff2f" strokeWidth={3} dot={{ r: 4, fill: '#adff2f' }} activeDot={{ r: 6 }} />
+                  <Line type="monotone" dataKey="realizado" name="Realizado" stroke="#22d3ee" strokeWidth={3} dot={{ r: 4, fill: '#22d3ee' }} activeDot={{ r: 6 }} />
+                  <Line type="monotone" dataKey="meta75" name="Meta 75%" stroke="#fbbf24" strokeWidth={2} strokeDasharray="4 4" dot={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </Panel>
+
+            {/* Side-by-side mini charts */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))', gap: 14 }}>
+              {/* Eixo 1 & 2 */}
+              <Panel style={{ 
+                padding: '20px 24px', 
+                background: '#0d3221', 
+                borderColor: '#164e32',
+                boxShadow: 'var(--shadow-md)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+                  <div>
+                    <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>
+                      Curva S — Eixo 1 & 2
+                    </h3>
+                    <span style={{ fontSize: '0.7rem', color: '#a2c1a9' }}>Planejado x Realizado</span>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={240}>
+                  <ComposedChart data={replicatedData.miniScurves} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#144e31" />
+                    <XAxis dataKey="mes" tick={{ fontSize: 10, fill: '#a2c1a9' }} />
+                    <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 10, fill: '#a2c1a9' }} domain={[0, 80]} />
+                    <Tooltip contentStyle={{ background: '#0a2317', border: '1px solid #164e32', borderRadius: 8, fontSize: '0.75rem', color: '#fff' }} />
+                    <Legend content={renderEixo12Legend} />
+                    <Line type="monotone" dataKey="planned" name="E1 plan" stroke="#adff2f" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+                    <Line type="monotone" dataKey="e1_real" name="E1 real" stroke="#adff2f" strokeWidth={2.5} dot={{ r: 3, fill: '#adff2f' }} />
+                    <Line type="monotone" dataKey="planned" name="E2 plan" stroke="#22d3ee" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+                    <Line type="monotone" dataKey="e2_real" name="E2 real" stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 3, fill: '#22d3ee' }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </Panel>
+
+              {/* Eixo 3 & 4 */}
+              <Panel style={{ 
+                padding: '20px 24px', 
+                background: '#0d3221', 
+                borderColor: '#164e32',
+                boxShadow: 'var(--shadow-md)'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+                  <div>
+                    <h3 style={{ fontSize: '0.9rem', fontWeight: 700, color: '#ffffff' }}>
+                      Curva S — Eixo 3 & 4
+                    </h3>
+                    <span style={{ fontSize: '0.7rem', color: '#a2c1a9' }}>Planejado x Realizado</span>
+                  </div>
+                </div>
+                <ResponsiveContainer width="100%" height={240}>
+                  <ComposedChart data={replicatedData.miniScurves} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#144e31" />
+                    <XAxis dataKey="mes" tick={{ fontSize: 10, fill: '#a2c1a9' }} />
+                    <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 10, fill: '#a2c1a9' }} domain={[0, 80]} />
+                    <Tooltip contentStyle={{ background: '#0a2317', border: '1px solid #164e32', borderRadius: 8, fontSize: '0.75rem', color: '#fff' }} />
+                    <Legend content={renderEixo34Legend} />
+                    <Line type="monotone" dataKey="planned" name="E3 plan" stroke="#fbbf24" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+                    <Line type="monotone" dataKey="e3_real" name="E3 real" stroke="#fbbf24" strokeWidth={2.5} dot={{ r: 3, fill: '#fbbf24' }} />
+                    <Line type="monotone" dataKey="planned" name="E4 plan" stroke="#f97316" strokeWidth={1.5} strokeDasharray="4 4" dot={false} />
+                    <Line type="monotone" dataKey="e4_real" name="E4 real" stroke="#f97316" strokeWidth={2.5} dot={{ r: 3, fill: '#f97316' }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </Panel>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Edit Modal */}

@@ -15,17 +15,20 @@ const STATUS_CONFIG = {
 };
 
 const AREA_COLORS = {
-  'Jurídico':               '#8b5cf6',
-  'Parcerias Estratégicas':  '#3b82f6',
   'Administrativo':          '#10b981',
-  'Financeiro':              '#f59e0b',
-  'Inovação e Projetos':     '#ec4899',
+  'CEFI':                    '#64748b',
+  'CET':                     '#06b6d4',
+  'Comercial':               '#3b82f6',
   'Comunicação':             '#14b8a6',
-  'CPL':                     '#6366f1',
-  'HUBIZ':                   '#f97316',
-  'Cel40':                   '#64748b',
   'Compras':                 '#84cc16',
-  'Eventos e Comunicação':   '#06b6d4',
+  'CPL':                     '#6366f1',
+  'Eventos':                 '#06b6d4',
+  'Financeiro':              '#f59e0b',
+  'Jurídico':                '#8b5cf6',
+  'Hubiz':                   '#f97316',
+  'Inovação e Projetos':     '#ec4899',
+  'Parcerias Estratégicas':  '#3b82f6',
+  'RH':                      '#ec4899',
 };
 
 function formatDate(iso) {
@@ -213,23 +216,29 @@ function TicketCard({ lead, onStatusChange }) {
 // ── Main Page ──────────────────────────────────────────────
 export default function MinhaArea() {
   const { userArea } = useAuth();
-  const areaColor     = AREA_COLORS[userArea] || 'var(--color-accent)';
+  
+  const userAreas = useMemo(() => {
+    return userArea ? userArea.split(',').map(a => a.trim()).filter(Boolean) : [];
+  }, [userArea]);
+
+  const areaColor = userArea ? (AREA_COLORS[userAreas[0]] || 'var(--color-accent)') : 'var(--color-accent)';
 
   const [leads, setLeads]       = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
   const [activeTab, setActiveTab] = useState('pendente'); // 'todos' | 'pendente' | 'concluido' | 'nao_concluido'
+  const [filterArea, setFilterArea] = useState('all');
 
   const load = useCallback(async () => {
-    if (!userArea) return;
+    if (userAreas.length === 0) return;
     setLoading(true);
     setError(null);
     const result = await fetchTicketMetrics({});
     if (result.error) {
       setError(result.error.message || 'Erro ao carregar tickets');
     } else {
-      // Filter only leads from this area
-      const areaLeads = (result.leads || []).filter(l => l.departamento === userArea);
+      // Filter leads from any of the user's assigned areas
+      const areaLeads = (result.leads || []).filter(l => userAreas.includes(l.departamento));
       // Sort: pendentes first, then by date desc
       areaLeads.sort((a, b) => {
         const aP = !a.ticket_status ? 0 : 1;
@@ -240,7 +249,7 @@ export default function MinhaArea() {
       setLeads(areaLeads);
     }
     setLoading(false);
-  }, [userArea]);
+  }, [userAreas]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -253,18 +262,26 @@ export default function MinhaArea() {
     ));
   };
 
-  // KPIs
-  const total         = leads.length;
-  const concluidos    = leads.filter(l => l.ticket_status === 'concluido').length;
-  const naoConcluidos = leads.filter(l => l.ticket_status === 'nao_concluido').length;
-  const pendentes     = leads.filter(l => !l.ticket_status).length;
+  // Filtered list by area selection
+  const filteredByAreaLeads = useMemo(() => {
+    if (filterArea === 'all') return leads;
+    return leads.filter(l => l.departamento === filterArea);
+  }, [leads, filterArea]);
 
-  // Filtered list
-  const visibleLeads = activeTab === 'todos'
-    ? leads
-    : activeTab === 'pendente'
-      ? leads.filter(l => !l.ticket_status)
-      : leads.filter(l => l.ticket_status === activeTab);
+  // Filtered list by status tabs
+  const visibleLeads = useMemo(() => {
+    return activeTab === 'todos'
+      ? filteredByAreaLeads
+      : activeTab === 'pendente'
+        ? filteredByAreaLeads.filter(l => !l.ticket_status)
+        : filteredByAreaLeads.filter(l => l.ticket_status === activeTab);
+  }, [filteredByAreaLeads, activeTab]);
+
+  // KPIs based on area selection
+  const total         = filteredByAreaLeads.length;
+  const concluidos    = filteredByAreaLeads.filter(l => l.ticket_status === 'concluido').length;
+  const naoConcluidos = filteredByAreaLeads.filter(l => l.ticket_status === 'nao_concluido').length;
+  const pendentes     = filteredByAreaLeads.filter(l => !l.ticket_status).length;
 
   const TABS = [
     { id: 'pendente',      label: 'Pendentes',      count: pendentes,     color: '#f59e0b' },
@@ -303,7 +320,7 @@ export default function MinhaArea() {
             <Building2 size={26} color="#fff" />
           </div>
           <div>
-            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--color-text-primary)' }}>{userArea}</h2>
+            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--color-text-primary)' }}>{userAreas.join(', ')}</h2>
             <p style={{ fontSize: '0.82rem', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
               Gerencie os tickets de atendimento da sua área
             </p>
@@ -345,9 +362,10 @@ export default function MinhaArea() {
         </div>
       )}
 
-      {/* ── Tabs ────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: '6px', background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: '6px', width: 'fit-content', flexWrap: 'wrap' }}>
-        {TABS.map(tab => (
+      {/* ── Tabs & Area Filter ──────────────────────── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', gap: '6px', background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: '6px', width: 'fit-content', flexWrap: 'wrap' }}>
+          {TABS.map(tab => (
           <button
             key={tab.id}
             id={`tab-${tab.id}`}
@@ -380,6 +398,34 @@ export default function MinhaArea() {
             </span>
           </button>
         ))}
+        </div>
+
+        {/* Dropdown de filtro (só aparece se o usuário possuir mais de uma área) */}
+        {userAreas.length > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Filtrar Área:</span>
+            <select
+              value={filterArea}
+              onChange={e => setFilterArea(e.target.value)}
+              style={{
+                padding: '8px 14px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-bg-card)',
+                color: 'var(--color-text-primary)',
+                fontSize: '0.83rem',
+                fontWeight: 600,
+                outline: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <option value="all">Todas as Minhas Áreas ({userAreas.length})</option>
+              {userAreas.map(a => (
+                <option key={a} value={a}>{a}</option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* ── Cards grid ─────────────────────────────── */}

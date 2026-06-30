@@ -1,42 +1,42 @@
 /* ===== DESIGN SYSTEM - PARQUE TECNOLÓGICO DE SOROCABA ===== */
 
 :root {
-  /* --- Light Theme (Default) --- */
-  --color-bg-primary: #f0f4f8;
+  /* --- Light Theme (Default) - PTS Inova Green Theme --- */
+  --color-bg-primary: #f3f8f4;
   --color-bg-secondary: #ffffff;
   --color-bg-sidebar: #ffffff;
   --color-bg-card: #ffffff;
-  --color-bg-hover: #f1f5f9;
-  --color-bg-active: #e8f0fe;
+  --color-bg-hover: #f0fdf4;
+  --color-bg-active: #eafaf1;
   --color-bg-input: #f8fafc;
-  --color-bg-badge: #e8f0fe;
+  --color-bg-badge: #eafaf1;
 
-  --color-text-primary: #0f172a;
-  --color-text-secondary: #475569;
-  --color-text-tertiary: #94a3b8;
-  --color-text-accent: #2563eb;
+  --color-text-primary: #0b281a;
+  --color-text-secondary: #2d5a43;
+  --color-text-tertiary: #6b8e7a;
+  --color-text-accent: #16a34a;
   --color-text-on-accent: #ffffff;
-  --color-text-badge: #2563eb;
+  --color-text-badge: #16a34a;
 
-  --color-border: #e2e8f0;
-  --color-border-light: #f1f5f9;
+  --color-border: #e2ece5;
+  --color-border-light: #f0f7f2;
 
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-accent-light: #dbeafe;
-  --color-accent-gradient: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+  --color-accent: #7bc650;
+  --color-accent-hover: #61a836;
+  --color-accent-light: #eafaf1;
+  --color-accent-gradient: linear-gradient(135deg, #7bc650 0%, #0d9488 100%);
 
   --color-success: #10b981;
   --color-warning: #f59e0b;
   --color-error: #ef4444;
-  --color-info: #3b82f6;
+  --color-info: #0d9488;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.06), 0 4px 6px -4px rgba(0, 0, 0, 0.04);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-sidebar: 2px 0 8px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 2px rgba(11, 40, 26, 0.03);
+  --shadow-md: 0 4px 6px -1px rgba(11, 40, 26, 0.05), 0 2px 4px -2px rgba(11, 40, 26, 0.03);
+  --shadow-lg: 0 10px 15px -3px rgba(11, 40, 26, 0.05), 0 4px 6px -4px rgba(11, 40, 26, 0.03);
+  --shadow-xl: 0 20px 25px -5px rgba(11, 40, 26, 0.06), 0 8px 10px -6px rgba(11, 40, 26, 0.04);
+  --shadow-card: 0 1px 3px rgba(11, 40, 26, 0.04), 0 1px 2px rgba(11, 40, 26, 0.02);
+  --shadow-sidebar: 2px 0 8px rgba(11, 40, 26, 0.03);
 
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -55,31 +55,31 @@
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-/* --- Dark Theme --- */
+/* --- Dark Theme - Deep Forest Green Theme --- */
 [data-theme="dark"] {
-  --color-bg-primary: #0b1121;
-  --color-bg-secondary: #111827;
-  --color-bg-sidebar: #111827;
-  --color-bg-card: #1e293b;
-  --color-bg-hover: #1e293b;
-  --color-bg-active: #1e3a5f;
-  --color-bg-input: #1e293b;
-  --color-bg-badge: #1e3a5f;
+  --color-bg-primary: #081a11;
+  --color-bg-secondary: #0d281a;
+  --color-bg-sidebar: #0d281a;
+  --color-bg-card: #143d28;
+  --color-bg-hover: #1e4d35;
+  --color-bg-active: #1e5e3a;
+  --color-bg-input: #143d28;
+  --color-bg-badge: #1e5e3a;
 
   --color-text-primary: #f1f5f9;
-  --color-text-secondary: #94a3b8;
-  --color-text-tertiary: #64748b;
-  --color-text-accent: #60a5fa;
+  --color-text-secondary: #a2c1a9;
+  --color-text-tertiary: #6b8e7a;
+  --color-text-accent: #86efac;
   --color-text-on-accent: #ffffff;
-  --color-text-badge: #60a5fa;
+  --color-text-badge: #86efac;
 
-  --color-border: #1e293b;
-  --color-border-light: #1e293b;
+  --color-border: #194d32;
+  --color-border-light: #1d5739;
 
-  --color-accent: #3b82f6;
-  --color-accent-hover: #2563eb;
-  --color-accent-light: #1e3a5f;
-  --color-accent-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+  --color-accent: #7bc650;
+  --color-accent-hover: #8ad662;
+  --color-accent-light: #064e3b;
+  --color-accent-gradient: linear-gradient(135deg, #7bc650 0%, #0d9488 100%);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
@@ -469,10 +469,10 @@ img {
   flex-shrink: 0;
 }
 
-.stat-card-icon.blue { background: linear-gradient(135deg, #3b82f6, #2563eb); }
-.stat-card-icon.green { background: linear-gradient(135deg, #10b981, #059669); }
-.stat-card-icon.purple { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
-.stat-card-icon.orange { background: linear-gradient(135deg, #f59e0b, #d97706); }
+.stat-card-icon.blue { background: linear-gradient(135deg, #0d9488, #0f766e); }
+.stat-card-icon.green { background: linear-gradient(135deg, #7bc650, #16a34a); }
+.stat-card-icon.purple { background: linear-gradient(135deg, #34d399, #059669); }
+.stat-card-icon.orange { background: linear-gradient(135deg, #a3e635, #4d7c0f); }
 
 .stat-card-change {
   display: flex;
@@ -623,7 +623,7 @@ img {
 }
 
 .chat-message.sent .chat-message-avatar {
-  background: linear-gradient(135deg, #10b981, #059669);
+  background: var(--color-accent-gradient);
 }
 
 .chat-message-content {
@@ -867,13 +867,13 @@ img {
 }
 
 .theme-option-preview.light {
-  background: linear-gradient(145deg, #f0f4f8 0%, #ffffff 100%);
-  border: 1px solid #e2e8f0;
+  background: linear-gradient(145deg, #f3f8f4 0%, #ffffff 100%);
+  border: 1px solid #e2ece5;
 }
 
 .theme-option-preview.dark {
-  background: linear-gradient(145deg, #0b1121 0%, #1e293b 100%);
-  border: 1px solid #1e293b;
+  background: linear-gradient(145deg, #081a11 0%, #143d28 100%);
+  border: 1px solid #194d32;
 }
 
 .theme-option-preview .mini-sidebar {
@@ -884,12 +884,12 @@ img {
 
 .theme-option-preview.light .mini-sidebar {
   background: #ffffff;
-  border-color: #e2e8f0;
+  border-color: #e2ece5;
 }
 
 .theme-option-preview.dark .mini-sidebar {
-  background: #111827;
-  border-color: #1e293b;
+  background: #0d281a;
+  border-color: #194d32;
 }
 
 .theme-option-preview .mini-content {
