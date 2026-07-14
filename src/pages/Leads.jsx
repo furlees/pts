@@ -146,6 +146,8 @@ export default function Leads() {
   const [forwardHistory, setForwardHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [sendingForward, setSendingForward] = useState(false);
+  const [emailProvider, setEmailProvider] = useState('gmail');
+  const [forwardStep, setForwardStep] = useState('input'); // 'input' or 'success'
 
   // Chat message states
   const [chatMessages, setChatMessages] = useState([]);
@@ -224,8 +226,8 @@ export default function Leads() {
         if (raw.startsWith('{')) {
           try {
             const parsed = JSON.parse(raw);
-            if (parsed.sender === 'bot' || parsed.type === 'bot' || parsed.isBot) {
-              sender = 'Helena';
+            if (parsed.sender === 'bot' || parsed.type === 'bot' || parsed.type === 'ai' || parsed.isBot) {
+              sender = 'Helena IA';
             } else {
               sender = 'Lead';
             }
@@ -237,8 +239,8 @@ export default function Leads() {
           text = raw;
         }
       } else if (raw && typeof raw === 'object') {
-        if (raw.sender === 'bot' || raw.type === 'bot' || raw.isBot) {
-          sender = 'Helena';
+        if (raw.sender === 'bot' || raw.type === 'bot' || raw.type === 'ai' || raw.isBot) {
+          sender = 'Helena IA';
         }
         text = raw.text || raw.content || JSON.stringify(raw);
       }
@@ -254,6 +256,162 @@ export default function Leads() {
       const time = msg.date ? new Date(msg.date).toLocaleString('pt-BR') : '';
       return `[${time}] ${sender}: ${text}`;
     }).join('\n');
+  };
+
+  const generateHtmlBody = (selectedLead, chatMessages, includeChatHistory, user) => {
+    const logoUrl = 'https://usxkmalddprlijlmoufd.supabase.co/storage/v1/object/public/imagens/logopts.jpeg';
+    const supportEmail = 'contato@agenciainova.org.br';
+    
+    const correctSubj = `Retorno Acuracia Helena - Ticket #${selectedLead.id}`;
+    const correctBody = `Confirmado. A triagem da Helena para o lead ${selectedLead.nome || 'Anônimo'} atribuído a ${selectedLead.departamento || 'Sem área'} foi CORRETA.`;
+    const correctMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(correctSubj)}&body=${encodeURIComponent(correctBody)}`;
+
+    const incorrectSubj = `Retorno Acuracia Helena - Ticket #${selectedLead.id}`;
+    const incorrectBody = `A triagem da Helena para o lead ${selectedLead.nome || 'Anônimo'} atribuído a ${selectedLead.departamento || 'Sem área'} foi INCORRETA.\n\nO departamento correto deveria ser: [Digite o setor correto aqui]\n`;
+    const incorrectMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(incorrectSubj)}&body=${encodeURIComponent(incorrectBody)}`;
+
+    let chatHtml = '';
+    if (includeChatHistory && chatMessages && chatMessages.length > 0) {
+      const messagesList = chatMessages.map(msg => {
+        let raw = msg.message;
+        let sender = 'Lead';
+        let text = '';
+        
+        if (typeof raw === 'string') {
+          if (raw.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(raw);
+              if (parsed.sender === 'bot' || parsed.type === 'bot' || parsed.type === 'ai' || parsed.isBot) {
+                sender = 'Helena IA';
+              } else {
+                sender = 'Lead';
+              }
+              text = parsed.text || parsed.content || JSON.stringify(parsed);
+            } catch (_) {
+              text = raw;
+            }
+          } else {
+            text = raw;
+          }
+        } else if (raw && typeof raw === 'object') {
+          if (raw.sender === 'bot' || raw.type === 'bot' || raw.type === 'ai' || raw.isBot) {
+            sender = 'Helena IA';
+          }
+          text = raw.text || raw.content || JSON.stringify(raw);
+        }
+        
+        // Clean JSON leaks in content
+        if (typeof text === 'string' && text.includes('{"text":')) {
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed.text) text = parsed.text;
+          } catch (_) {}
+        }
+        
+        const time = msg.date ? new Date(msg.date).toLocaleString('pt-BR') : '';
+        const bgColor = sender === 'Helena IA' ? '#f0f4f9' : '#f1f3f4';
+        const senderColor = sender === 'Helena IA' ? '#0b57d0' : '#1f1f1f';
+        
+        return `
+          <div style="margin-bottom: 8px; padding: 12px; background-color: ${bgColor}; border-radius: 8px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 13px; line-height: 1.4;">
+            <strong style="color: ${senderColor}; font-size: 12px;">${sender}</strong>
+            <span style="font-size: 11px; color: #5f6368; margin-left: 8px;">${time}</span>
+            <div style="margin-top: 4px; color: #1f1f1f; white-space: pre-wrap;">${text}</div>
+          </div>
+        `;
+      }).join('');
+      
+      chatHtml = `
+        <div style="margin-top: 24px; border-top: 1px solid #e0e0e0; padding-top: 16px;">
+          <h4 style="margin: 0 0 12px 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 14px; color: #1f1f1f; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;">Histórico de Conversas (WhatsApp)</h4>
+          <div style="max-height: 350px; overflow-y: auto; padding-right: 4px;">
+            ${messagesList}
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <div style="max-width: 600px; margin: 0 auto; padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #1f1f1f; background-color: #f8f9fa;">
+        <div style="background-color: #ffffff; border-radius: 16px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid #e0e0e0; overflow: hidden;">
+          
+          <!-- Header -->
+          <div style="background: linear-gradient(135deg, #0e1e24, #1b353f, #234654); padding: 28px 24px; text-align: center;">
+            <img src="${logoUrl}" alt="Parque Tecnológico de Sorocaba" style="max-height: 56px; display: block; margin: 0 auto 12px; border-radius: 8px; background: #ffffff; padding: 4px;" />
+            <h2 style="margin: 0; color: #ffffff; font-size: 18px; font-weight: 700; letter-spacing: 0.5px;">Encaminhamento de Lead</h2>
+            <p style="margin: 4px 0 0 0; color: #a1b0b5; font-size: 12px;">Helena Inteligência Artificial — PTS</p>
+          </div>
+          
+          <!-- Lead Info Card -->
+          <div style="padding: 28px;">
+            <h3 style="margin: 0 0 16px 0; font-size: 15px; color: #1b353f; border-bottom: 2px solid #1b353f; padding-bottom: 6px; display: inline-block; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Ficha Cadastral do Lead</h3>
+            
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+              <tr>
+                <td style="padding: 10px 0; width: 140px; font-weight: 700; font-size: 13px; color: #5f6368; border-bottom: 1px solid #f1f3f4;">Nome:</td>
+                <td style="padding: 10px 0; font-size: 14px; color: #1f1f1f; border-bottom: 1px solid #f1f3f4; font-weight: 600;">${selectedLead.nome || '—'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0; font-weight: 700; font-size: 13px; color: #5f6368; border-bottom: 1px solid #f1f3f4;">Empresa:</td>
+                <td style="padding: 10px 0; font-size: 14px; color: #1f1f1f; border-bottom: 1px solid #f1f3f4;">${selectedLead.empresa || '—'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0; font-weight: 700; font-size: 13px; color: #5f6368; border-bottom: 1px solid #f1f3f4;">E-mail:</td>
+                <td style="padding: 10px 0; font-size: 14px; color: #1f1f1f; border-bottom: 1px solid #f1f3f4;"><a href="mailto:${selectedLead.email}" style="color: #0b57d0; text-decoration: none;">${selectedLead.email || '—'}</a></td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0; font-weight: 700; font-size: 13px; color: #5f6368; border-bottom: 1px solid #f1f3f4;">Telefone:</td>
+                <td style="padding: 10px 0; font-size: 14px; color: #1f1f1f; border-bottom: 1px solid #f1f3f4;">${selectedLead.telefone || '—'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0; font-weight: 700; font-size: 13px; color: #5f6368; border-bottom: 1px solid #f1f3f4;">Cargo:</td>
+                <td style="padding: 10px 0; font-size: 14px; color: #1f1f1f; border-bottom: 1px solid #f1f3f4;">${selectedLead.cargo || '—'}</td>
+              </tr>
+              <tr>
+                <td style="padding: 10px 0; font-weight: 700; font-size: 13px; color: #5f6368; border-bottom: 1px solid #f1f3f4;">Área Direcionada:</td>
+                <td style="padding: 10px 0; font-size: 14px; color: #0b57d0; border-bottom: 1px solid #f1f3f4; font-weight: 700;">${selectedLead.departamento || 'Sem área'}</td>
+              </tr>
+            </table>
+
+            <!-- Motivo & Resumo -->
+            <div style="background-color: #f8f9fa; border-left: 4px solid #1b353f; padding: 14px 16px; margin-bottom: 16px; border-radius: 0 8px 8px 0;">
+              <strong style="font-size: 12px; color: #1b353f; display: block; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Motivo do Contato:</strong>
+              <div style="font-size: 13px; line-height: 1.5; color: #1f1f1f; white-space: pre-wrap;">${selectedLead.motivo || '—'}</div>
+            </div>
+
+            <div style="background-color: #f8f9fa; border-left: 4px solid #0b57d0; padding: 14px 16px; margin-bottom: 24px; border-radius: 0 8px 8px 0;">
+              <strong style="font-size: 12px; color: #0b57d0; display: block; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Resumo do Atendimento:</strong>
+              <div style="font-size: 13px; line-height: 1.5; color: #1f1f1f; white-space: pre-wrap;">${selectedLead.resumo || '—'}</div>
+            </div>
+
+            <!-- Chat messages -->
+            ${chatHtml}
+
+            <!-- Evaluation Card -->
+            <div style="margin-top: 32px; padding: 24px; background: #f0f4f9; border-radius: 12px; border: 1px solid #d3e3fd; text-align: center;">
+              <h4 style="margin: 0 0 6px 0; font-size: 14px; color: #0b57d0; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Avaliação de Acurácia</h4>
+              <p style="margin: 0 0 18px 0; font-size: 12px; color: #5f6368; line-height: 1.4;">Clique em uma das opções abaixo para relatar o resultado da triagem diretamente por e-mail:</p>
+              
+              <div style="display: inline-block;">
+                <a href="${correctMailto}" style="display: inline-block; padding: 10px 20px; color: #ffffff; background-color: #137333; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 12px; margin: 4px 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
+                  ✓ Acurácia CORRETA
+                </a>
+                <a href="${incorrectMailto}" style="display: inline-block; padding: 10px 20px; color: #ffffff; background-color: #b31412; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 12px; margin: 4px 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
+                  ✗ Acurácia INCORRETA
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <!-- Footer -->
+          <div style="background-color: #f1f3f4; padding: 16px 24px; font-size: 11px; color: #5f6368; text-align: center; border-top: 1px solid #e0e0e0;">
+            Encaminhado por: <strong>${user?.name || 'Sistema'}</strong> (${user?.email || ''})<br/>
+            Data: ${new Date().toLocaleString('pt-BR')} | Helena PTS
+          </div>
+
+        </div>
+      </div>
+    `;
   };
 
   const handleSendForward = async () => {
@@ -342,9 +500,39 @@ export default function Leads() {
         `Encaminhado por: ${user?.name || 'Sistema'} (${user?.email || ''})\n` +
         `Data do Encaminhamento: ${new Date().toLocaleString('pt-BR')}\n`;
 
-      const mailtoUrl = `mailto:${encodeURIComponent(emails.join(','))}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-      
-      window.location.href = mailtoUrl;
+      // Copy formatted HTML template to clipboard
+      try {
+        const htmlContent = generateHtmlBody(selectedLead, chatMessages, includeChatHistory, user);
+        const blobHtml = new Blob([htmlContent], { type: 'text/html' });
+        const blobText = new Blob([body], { type: 'text/plain' });
+        
+        if (typeof ClipboardItem !== 'undefined') {
+          const item = new ClipboardItem({
+            'text/html': blobHtml,
+            'text/plain': blobText
+          });
+          await navigator.clipboard.write([item]);
+        } else {
+          await navigator.clipboard.writeText(body);
+        }
+      } catch (clipErr) {
+        console.error("Erro ao copiar e-mail formatado:", clipErr);
+        try {
+          await navigator.clipboard.writeText(body);
+        } catch (_) {}
+      }
+
+      // Open email composer window with placeholders
+      const placeholderSubject = `[Lead PTS] Encaminhamento de Lead - ${selectedLead.nome || 'Anônimo'}`;
+      const placeholderBody = `👉 Pressione Ctrl+V (ou Cmd+V) para colar a ficha formatada do lead com a logo do PTS!`;
+
+      if (emailProvider === 'gmail') {
+        const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(emails.join(','))}&su=${encodeURIComponent(placeholderSubject)}&body=${encodeURIComponent(placeholderBody)}`;
+        window.open(gmailUrl, '_blank');
+      } else {
+        const mailtoUrl = `mailto:${encodeURIComponent(emails.join(','))}?subject=${encodeURIComponent(placeholderSubject)}&body=${encodeURIComponent(placeholderBody)}`;
+        window.location.href = mailtoUrl;
+      }
 
       // Update local state history
       setForwardHistory(prev => [{
@@ -352,8 +540,7 @@ export default function Leads() {
         ...logData
       }, ...prev]);
 
-      setShowForwardModal(false);
-      setForwardRecipients('');
+      setForwardStep('success');
     } catch (err) {
       console.error("Erro ao registrar encaminhamento:", err);
       alert("Erro ao salvar histórico de envio no banco de dados.");
@@ -384,7 +571,10 @@ export default function Leads() {
 
   // Filter local by search text and user area if not admin
   const filteredLeads = leadsList.filter(lead => {
-    if (!isAdmin && userArea && lead.departamento !== userArea) return false;
+    if (!isAdmin && userArea) {
+      const userAreas = userArea.split(',').map(a => a.trim()).filter(Boolean);
+      if (!userAreas.includes(lead.departamento)) return false;
+    }
     
     if (!searchTerm) return true;
     const searchLower = searchTerm.toLowerCase();
@@ -725,7 +915,7 @@ export default function Leads() {
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
                   <button
                     id="btn-encaminhar-lead"
-                    onClick={() => setShowForwardModal(true)}
+                    onClick={() => { setShowForwardModal(true); setForwardStep('input'); }}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -1285,108 +1475,169 @@ export default function Leads() {
                   <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>Envie os dados formatados do lead</p>
                 </div>
               </div>
-              <button onClick={() => { setShowForwardModal(false); setForwardRecipients(''); }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '4px' }}>
+              <button onClick={() => { setShowForwardModal(false); setForwardRecipients(''); setForwardStep('input'); }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '4px' }}>
                 <XCircle size={20} />
               </button>
             </div>
 
-            {/* Content */}
-            <div style={{ padding: '24px 28px' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                
-                {/* Recipients */}
-                <div>
-                  <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>
-                    Destinatários (separe múltiplos por vírgula) *
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="exemplo1@agenciainova.org.br, exemplo2@agenciainova.org.br"
-                    value={forwardRecipients}
-                    onChange={e => setForwardRecipients(e.target.value)}
-                    style={{ width: '100%', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
-                  />
+            {/* Content & Footer */}
+            {forwardStep === 'success' ? (
+              <div style={{ padding: '30px 28px', textAlign: 'center' }}>
+                <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#e6f4ea', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#137333' }}>
+                  <CheckCircle size={32} />
                 </div>
-
-                {/* Checkbox to include history */}
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--color-text-primary)', marginTop: '4px', userSelect: 'none' }}>
-                  <input
-                    type="checkbox"
-                    checked={includeChatHistory}
-                    onChange={e => setIncludeChatHistory(e.target.checked)}
-                    style={{ cursor: 'pointer' }}
-                  />
-                  <span>Incluir histórico de conversas do WhatsApp ({chatMessages.length} mensagens)</span>
-                </label>
-
-                {/* Email Preview */}
-                {selectedLeadId && (() => {
-                  const lead = filteredLeads.find(l => l.id === selectedLeadId);
-                  if (!lead) return null;
-                  return (
+                <h4 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: '8px' }}>E-mail Pronto para Envio!</h4>
+                <p style={{ fontSize: '0.9rem', color: 'var(--color-text-secondary)', lineHeight: '1.5', margin: '0 0 20px 0' }}>
+                  O e-mail formatado (HTML) com a <strong>logo do Parque Tecnológico</strong> e a ficha completa do lead foi copiado para sua área de transferência.
+                </p>
+                <div style={{ background: 'var(--color-bg-inner)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '16px', fontSize: '0.85rem', color: 'var(--color-text-secondary)', textAlign: 'left', marginBottom: '24px' }}>
+                  <strong style={{ color: 'var(--color-text-primary)', display: 'block', marginBottom: '8px' }}>👉 Próximos passos:</strong>
+                  <ol style={{ margin: 0, paddingLeft: '20px', lineHeight: '1.6' }}>
+                    <li>Aguarde a janela de composição do seu provedor de e-mail carregar.</li>
+                    <li>Clique no corpo do e-mail (onde escreve a mensagem).</li>
+                    <li>Pressione <strong>Ctrl+V</strong> (ou <strong>Cmd+V</strong> no Mac) para colar o template formatado.</li>
+                    <li>Revise e envie o e-mail!</li>
+                  </ol>
+                </div>
+                <button
+                  onClick={() => { setShowForwardModal(false); setForwardRecipients(''); setForwardStep('input'); }}
+                  style={{ width: '100%', padding: '12px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer' }}
+                >
+                  Fechar Janela
+                </button>
+              </div>
+            ) : (
+              <>
+                {/* Content */}
+                <div style={{ padding: '24px 28px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    
+                    {/* Recipients */}
                     <div>
                       <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>
-                        Pré-visualização da Mensagem (E-mail)
+                        Destinatários (separe múltiplos por vírgula) *
                       </label>
-                      <div style={{
-                        background: 'var(--color-bg-inner)',
-                        border: '1px solid var(--color-border)',
-                        borderRadius: 'var(--radius-md)',
-                        padding: '16px',
-                        fontSize: '0.82rem',
-                        color: 'var(--color-text-secondary)',
-                        maxHeight: '220px',
-                        overflowY: 'auto',
-                        fontFamily: 'monospace',
-                        whiteSpace: 'pre-wrap',
-                        lineHeight: '1.4'
-                      }}>
-                        <strong>Assunto:</strong> [Lead PTS] Encaminhamento de Lead - {lead.nome || 'Anônimo'}{'\n\n'}
-                        Olá,{'\n\n'}
-                        Segue o encaminhamento dos dados do lead de atendimento do PTS:{'\n\n'}
-                        • Nome: {lead.nome || '—'}{'\n'}
-                        • Empresa: {lead.empresa || '—'}{'\n'}
-                        • E-mail: {lead.email || '—'}{'\n'}
-                        • Telefone: {lead.telefone || '—'}{'\n'}
-                        • Cargo: {lead.cargo || '—'}{'\n'}
-                        • Departamento/Área: {lead.departamento || '—'}{'\n\n'}
-                        <strong>Motivo do Atendimento:</strong>{'\n'}{lead.motivo || '—'}{'\n\n'}
-                        <strong>Resumo do Atendimento:</strong>{'\n'}{lead.resumo || '—'}{'\n\n'}
-                        {includeChatHistory && (
-                          <>
-                            <strong>Histórico de Conversas (WhatsApp):</strong>{'\n'}
-                            {formatChatMessages(chatMessages)}{'\n\n'}
-                          </>
-                        )}
-                        <strong>Links de Avaliação (Ação Direta do Gestor):</strong>{'\n'}
-                        👉 Acurácia Correta: mailto:contato@agenciainova.org.br?subject=Retorno...{'\n'}
-                        👉 Acurácia Incorreta: mailto:contato@agenciainova.org.br?subject=Retorno...
+                      <input
+                        type="text"
+                        placeholder="exemplo1@agenciainova.org.br, exemplo2@agenciainova.org.br"
+                        value={forwardRecipients}
+                        onChange={e => setForwardRecipients(e.target.value)}
+                        style={{ width: '100%', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+                      />
+                    </div>
+
+                    {/* Provedor de E-mail */}
+                    <div>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '8px' }}>
+                        Enviar usando:
+                      </label>
+                      <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: 'var(--color-text-primary)', cursor: 'pointer', userSelect: 'none' }}>
+                          <input
+                            type="radio"
+                            name="emailProvider"
+                            value="gmail"
+                            checked={emailProvider === 'gmail'}
+                            onChange={() => setEmailProvider('gmail')}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          Gmail / Google Workspace (Web)
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', color: 'var(--color-text-primary)', cursor: 'pointer', userSelect: 'none' }}>
+                          <input
+                            type="radio"
+                            name="emailProvider"
+                            value="system"
+                            checked={emailProvider === 'system'}
+                            onChange={() => setEmailProvider('system')}
+                            style={{ cursor: 'pointer' }}
+                          />
+                          E-mail Padrão do Sistema (mailto)
+                        </label>
                       </div>
                     </div>
-                  );
-                })()}
 
-              </div>
-            </div>
+                    {/* Checkbox to include history */}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--color-text-primary)', marginTop: '4px', userSelect: 'none' }}>
+                      <input
+                        type="checkbox"
+                        checked={includeChatHistory}
+                        onChange={e => setIncludeChatHistory(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                      <span>Incluir histórico de conversas do WhatsApp ({chatMessages.length} mensagens)</span>
+                    </label>
 
-            {/* Footer */}
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', padding: '16px 28px 24px', borderTop: '1px solid var(--color-border-light)' }}>
-              <button
-                type="button"
-                onClick={() => { setShowForwardModal(false); setForwardRecipients(''); }}
-                style={{ padding: '10px 18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-secondary)', fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer' }}
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                disabled={sendingForward}
-                onClick={handleSendForward}
-                style={{ padding: '10px 22px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.88rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px' }}
-              >
-                <Send size={15} /> {sendingForward ? 'Encaminhando...' : 'Encaminhar'}
-              </button>
-            </div>
+                    {/* Email Preview */}
+                    {selectedLeadId && (() => {
+                      const lead = filteredLeads.find(l => l.id === selectedLeadId);
+                      if (!lead) return null;
+                      return (
+                        <div>
+                          <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>
+                            Pré-visualização da Mensagem (E-mail)
+                          </label>
+                          <div style={{
+                            background: 'var(--color-bg-inner)',
+                            border: '1px solid var(--color-border)',
+                            borderRadius: 'var(--radius-md)',
+                            padding: '16px',
+                            fontSize: '0.82rem',
+                            color: 'var(--color-text-secondary)',
+                            maxHeight: '220px',
+                            overflowY: 'auto',
+                            fontFamily: 'monospace',
+                            whiteSpace: 'pre-wrap',
+                            lineHeight: '1.4'
+                          }}>
+                            <strong>Assunto:</strong> [Lead PTS] Encaminhamento de Lead - {lead.nome || 'Anônimo'}{'\n\n'}
+                            Olá,{'\n\n'}
+                            Segue o encaminhamento dos dados do lead de atendimento do PTS:{'\n\n'}
+                            • Nome: {lead.nome || '—'}{'\n'}
+                            • Empresa: {lead.empresa || '—'}{'\n'}
+                            • E-mail: {lead.email || '—'}{'\n'}
+                            • Telefone: {lead.telefone || '—'}{'\n'}
+                            • Cargo: {lead.cargo || '—'}{'\n'}
+                            • Departamento/Área: {lead.departamento || '—'}{'\n\n'}
+                            <strong>Motivo do Atendimento:</strong>{'\n'}{lead.motivo || '—'}{'\n\n'}
+                            <strong>Resumo do Atendimento:</strong>{'\n'}{lead.resumo || '—'}{'\n\n'}
+                            {includeChatHistory && (
+                              <>
+                                <strong>Histórico de Conversas (WhatsApp):</strong>{'\n'}
+                                {formatChatMessages(chatMessages)}{'\n\n'}
+                              </>
+                            )}
+                            <strong>Links de Avaliação (Ação Direta do Gestor):</strong>{'\n'}
+                            👉 Acurácia Correta: mailto:contato@agenciainova.org.br?subject=Retorno...{'\n'}
+                            👉 Acurácia Incorreta: mailto:contato@agenciainova.org.br?subject=Retorno...
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', padding: '16px 28px 24px', borderTop: '1px solid var(--color-border-light)' }}>
+                  <button
+                    type="button"
+                    onClick={() => { setShowForwardModal(false); setForwardRecipients(''); setForwardStep('input'); }}
+                    style={{ padding: '10px 18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-secondary)', fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer' }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={sendingForward}
+                    onClick={handleSendForward}
+                    style={{ padding: '10px 22px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.88rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px' }}
+                  >
+                    <Send size={15} /> {sendingForward ? 'Encaminhando...' : 'Encaminhar'}
+                  </button>
+                </div>
+              </>
+            )}
 
           </div>
         </div>

@@ -10,6 +10,7 @@ const ADMIN_NAV = [
   { label: 'Dashboard',          path: '/',          icon: LayoutDashboard },
   { label: 'Chat em Tempo Real', path: '/chat',      icon: MessageCircle, badge: '3' },
   { label: 'Base de Leads',      path: '/leads',     icon: Database },
+  { label: 'Minha Área (Tickets)', path: '/minha-area', icon: Building2 },
   { label: 'Indicadores',        path: '/tickets',   icon: BarChart2 },
   { label: 'Executivo',          path: '/executivo', icon: LayoutGrid },
   { label: 'Gestão de Usuários', path: '/admin',     icon: UserCog },

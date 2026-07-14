@@ -215,11 +215,14 @@ function TicketCard({ lead, onStatusChange }) {
 
 // ── Main Page ──────────────────────────────────────────────
 export default function MinhaArea() {
-  const { userArea } = useAuth();
+  const { userArea, isAdmin } = useAuth();
   
   const userAreas = useMemo(() => {
+    if (isAdmin && !userArea) {
+      return Object.keys(AREA_COLORS);
+    }
     return userArea ? userArea.split(',').map(a => a.trim()).filter(Boolean) : [];
-  }, [userArea]);
+  }, [userArea, isAdmin]);
 
   const areaColor = userArea ? (AREA_COLORS[userAreas[0]] || 'var(--color-accent)') : 'var(--color-accent)';
 
@@ -290,7 +293,7 @@ export default function MinhaArea() {
     { id: 'todos',         label: 'Todos',           count: total,         color: 'var(--color-text-tertiary)' },
   ];
 
-  if (!userArea) {
+  if (!isAdmin && !userArea) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', flexDirection: 'column', gap: '12px', color: 'var(--color-text-tertiary)' }}>
         <AlertCircle size={40} />
@@ -320,9 +323,11 @@ export default function MinhaArea() {
             <Building2 size={26} color="#fff" />
           </div>
           <div>
-            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--color-text-primary)' }}>{userAreas.join(', ')}</h2>
+            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--color-text-primary)' }}>
+              {isAdmin && !userArea ? "Todas as Áreas (Visão Geral)" : userAreas.join(', ')}
+            </h2>
             <p style={{ fontSize: '0.82rem', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
-              Gerencie os tickets de atendimento da sua área
+              {isAdmin && !userArea ? "Gerencie os tickets de atendimento de todas as áreas do ecossistema" : "Gerencie os tickets de atendimento da sua área"}
             </p>
           </div>
         </div>
