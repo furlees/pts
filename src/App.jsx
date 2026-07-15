@@ -26,13 +26,22 @@ const pageInfo = {
 
 function AppLayout() {
   const location = useLocation();
-  const { user, isAdmin } = useAuth();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'Admin';
+  const isViewer = user?.role === 'Viewer';
   const currentPage = pageInfo[location.pathname] || pageInfo['/'];
 
-  // Redirect area users away from admin-only pages
-  const adminOnlyPaths = ['/', '/chat', '/tickets', '/executivo', '/admin'];
-  if (!isAdmin && adminOnlyPaths.includes(location.pathname)) {
-    return <Navigate to="/minha-area" replace />;
+  // Redirect role-based restrictions
+  if (isViewer) {
+    const viewerPaths = ['/', '/tickets', '/executivo'];
+    if (!viewerPaths.includes(location.pathname)) {
+      return <Navigate to="/" replace />;
+    }
+  } else if (!isAdmin) {
+    const adminOnlyPaths = ['/', '/chat', '/tickets', '/executivo', '/admin'];
+    if (adminOnlyPaths.includes(location.pathname)) {
+      return <Navigate to="/minha-area" replace />;
+    }
   }
 
   return (

@@ -6,33 +6,23 @@ import {
   ChevronDown, UserCog,
 } from 'lucide-react';
 
-const AREAS_LIST = [
-  'Administrativo', 'CEFI', 'CET', 'Comercial', 'Comunicação',
-  'Compras', 'CPL', 'Eventos', 'Financeiro', 'Jurídico',
-  'Hubiz', 'Inovação e Projetos', 'Parcerias Estratégicas', 'RH',
-];
-
-const AREA_COLORS = {
-  'Administrativo':          '#10b981',
-  'CEFI':                    '#64748b',
-  'CET':                     '#06b6d4',
-  'Comercial':               '#3b82f6',
-  'Comunicação':             '#14b8a6',
-  'Compras':                 '#84cc16',
-  'CPL':                     '#6366f1',
-  'Eventos':                 '#06b6d4',
-  'Financeiro':              '#f59e0b',
-  'Jurídico':                '#8b5cf6',
-  'Hubiz':                   '#f97316',
-  'Inovação e Projetos':     '#ec4899',
-  'Parcerias Estratégicas':  '#3b82f6',
-  'RH':                      '#ec4899',
-};
-
 const EMPTY_FORM = { name: '', email: '', password: '', role: 'User', area: '' };
 
 // ── Helpers ────────────────────────────────────────────────
 function RoleBadge({ role }) {
+  if (role === 'Viewer') {
+    return (
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: '5px',
+        padding: '3px 10px', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700,
+        background: 'rgba(100,116,139,0.12)',
+        color: '#64748b',
+        border: '1px solid rgba(100,116,139,0.3)',
+      }}>
+        <ShieldOff size={11} /> Somente Leitura
+      </span>
+    );
+  }
   const isAdmin = role === 'Admin';
   return (
     <span style={{
@@ -48,13 +38,13 @@ function RoleBadge({ role }) {
   );
 }
 
-function AreaBadge({ area }) {
+function AreaBadge({ area, areaColors = {} }) {
   if (!area) return <span style={{ color: 'var(--color-text-tertiary)', fontSize: '0.8rem' }}>—</span>;
   const areas = area.split(',').map(a => a.trim()).filter(Boolean);
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
       {areas.map(a => {
-        const color = AREA_COLORS[a] || '#64748b';
+        const color = areaColors[a] || '#64748b';
         return (
           <span
             key={a}
@@ -80,7 +70,7 @@ function AreaBadge({ area }) {
   );
 }
 
-function MultiAreaSelector({ selectedAreas, onChange, disabled }) {
+function MultiAreaSelector({ selectedAreas, onChange, disabled, areasList = [] }) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
 
@@ -149,7 +139,7 @@ function MultiAreaSelector({ selectedAreas, onChange, disabled }) {
           overflowY: 'auto',
           padding: '8px'
         }}>
-          {AREAS_LIST.map(area => {
+          {areasList.map(area => {
             const checked = selectedAreas.includes(area);
             return (
               <label
@@ -184,7 +174,8 @@ function MultiAreaSelector({ selectedAreas, onChange, disabled }) {
 }
 
 // ── Inline edit row ────────────────────────────────────────
-function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
+// ── Inline edit row ────────────────────────────────────────
+function EditableUserRow({ u, currentUserId, onSave, onDelete, areaColors = {}, areasList = [] }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm]       = useState({ name: u.name, email: u.email || '', role: u.role, area: u.area || '', password: '' });
   const [confirm, setConfirm] = useState(false);
@@ -197,7 +188,7 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
         name: form.name.trim() || u.name,
         email: form.email.trim().toLowerCase() || u.email,
         role: form.role,
-        area: form.role === 'Admin' ? null : (form.area || null),
+        area: form.area || null,
         ...(form.password ? { password: form.password } : {}),
       });
       if (res && res.success === false) {
@@ -241,7 +232,7 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div style={{
               width: '36px', height: '36px', borderRadius: '50%', flexShrink: 0,
-              background: u.role === 'Admin' ? '#8b5cf6' : (AREA_COLORS[u.area ? u.area.split(',')[0].trim() : ''] || 'var(--color-accent)'),
+              background: u.role === 'Admin' && !u.area ? '#8b5cf6' : (areaColors[u.area ? u.area.split(',')[0].trim() : ''] || 'var(--color-accent)'),
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: '#fff', fontWeight: 700, fontSize: '0.8rem',
             }}>
@@ -256,7 +247,7 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
           </div>
         </td>
         <td style={{ padding: '14px 16px' }}><RoleBadge role={u.role} /></td>
-        <td style={{ padding: '14px 16px' }}><AreaBadge area={u.area} /></td>
+        <td style={{ padding: '14px 16px' }}><AreaBadge area={u.area} areaColors={areaColors} /></td>
         <td style={{ padding: '14px 16px' }}>
           <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
             <button
@@ -312,20 +303,22 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
             <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nível de Acesso</label>
             <select
               value={form.role}
-              onChange={e => setForm(p => ({ ...p, role: e.target.value, area: e.target.value === 'Admin' ? '' : p.area }))}
+              onChange={e => setForm(p => ({ ...p, role: e.target.value }))}
               style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
             >
               <option value="Admin">Administrador</option>
               <option value="User">Usuário de Área</option>
+              <option value="Viewer">Somente Leitura</option>
             </select>
           </div>
           {/* Area */}
           <div>
             <label style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Área</label>
             <MultiAreaSelector
-              disabled={form.role === 'Admin'}
+              disabled={false}
               selectedAreas={form.area ? form.area.split(',').map(a => a.trim()).filter(Boolean) : []}
               onChange={next => setForm(p => ({ ...p, area: next.join(', ') }))}
+              areasList={areasList}
             />
           </div>
           {/* New password */}
@@ -362,7 +355,7 @@ function EditableUserRow({ u, currentUserId, onSave, onDelete }) {
 }
 
 // ── Add User Modal ─────────────────────────────────────────
-function AddUserModal({ onClose, onAdd }) {
+function AddUserModal({ onClose, onAdd, areasList = [] }) {
   const [form, setForm]     = useState(EMPTY_FORM);
   const [error, setError]   = useState('');
   const [saving, setSaving] = useState(false);
@@ -461,24 +454,26 @@ function AddUserModal({ onClose, onAdd }) {
               <select
                 id="new-user-role"
                 value={form.role}
-                onChange={e => setForm(p => ({ ...p, role: e.target.value, area: e.target.value === 'Admin' ? '' : p.area }))}
+                onChange={e => setForm(p => ({ ...p, role: e.target.value }))}
                 style={{ width: '100%', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', cursor: 'pointer', boxSizing: 'border-box' }}
               >
                 <option value="Admin">Administrador</option>
                 <option value="User">Usuário de Área</option>
+                <option value="Viewer">Somente Leitura</option>
               </select>
             </div>
             {/* Area */}
-            {form.role === 'User' && (
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>Área *</label>
-                <MultiAreaSelector
-                  disabled={false}
-                  selectedAreas={form.area ? form.area.split(',').map(a => a.trim()).filter(Boolean) : []}
-                  onChange={next => setForm(p => ({ ...p, area: next.join(', ') }))}
-                />
-              </div>
-            )}
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>
+                Área {form.role === 'User' ? '*' : '(opcional para administradores)'}
+              </label>
+              <MultiAreaSelector
+                disabled={false}
+                selectedAreas={form.area ? form.area.split(',').map(a => a.trim()).filter(Boolean) : []}
+                onChange={next => setForm(p => ({ ...p, area: next.join(', ') }))}
+                areasList={areasList}
+              />
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', paddingTop: '8px', borderTop: '1px solid var(--color-border-light)' }}>
@@ -502,10 +497,13 @@ function AddUserModal({ onClose, onAdd }) {
 
 // ── Main Page ──────────────────────────────────────────────
 export default function AdminPage() {
-  const { users, user: currentUser, addUser, updateUser, deleteUser, resetUsersToSeed, isAdmin } = useAuth();
+  const { users, areas = [], user: currentUser, addUser, updateUser, deleteUser, resetUsersToSeed, isAdmin, addArea, updateArea, deleteArea } = useAuth();
+  const [activeTab, setActiveTab] = useState('users'); // 'users' | 'areas'
   const [search, setSearch]       = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [showAreaModal, setShowAreaModal] = useState(false);
+  const [areaToEdit, setAreaToEdit] = useState(null);
   const [resetConfirm, setResetConfirm] = useState(false);
 
   if (!isAdmin) {
@@ -517,7 +515,16 @@ export default function AdminPage() {
     );
   }
 
-  const filtered = useMemo(() => {
+  const areasList = useMemo(() => (areas || []).map(a => a.name), [areas]);
+  const areaColors = useMemo(() => {
+    const colors = {};
+    (areas || []).forEach(a => {
+      colors[a.name] = a.color || '#64748b';
+    });
+    return colors;
+  }, [areas]);
+
+  const filteredUsers = useMemo(() => {
     return (users || []).filter(u => {
       const q = search.toLowerCase();
       const matchSearch = !q || u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || (u.area || '').toLowerCase().includes(q);
@@ -525,6 +532,13 @@ export default function AdminPage() {
       return matchSearch && matchRole;
     });
   }, [users, search, roleFilter]);
+
+  const filteredAreas = useMemo(() => {
+    return (areas || []).filter(a => {
+      const q = search.toLowerCase();
+      return !q || a.name.toLowerCase().includes(q);
+    });
+  }, [areas, search]);
 
   const totalAdmins = (users || []).filter(u => u.role === 'Admin').length;
   const totalUsers  = (users || []).filter(u => u.role === 'User').length;
@@ -545,17 +559,16 @@ export default function AdminPage() {
             <UserCog size={26} color="#fff" />
           </div>
           <div>
-            <h2 style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--color-text-primary)' }}>Gestão de Usuários</h2>
+            <h2 style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--color-text-primary)' }}>Gestão Administrativa</h2>
             <p style={{ fontSize: '0.82rem', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
-              Gerencie permissões, áreas e acessos da plataforma
+              Gerencie permissões, usuários, setores e acessos da plataforma
             </p>
           </div>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           {[
-            { label: 'Total',          value: (users || []).length, color: '#8b5cf6' },
-            { label: 'Administradores', value: totalAdmins,          color: '#8b5cf6' },
-            { label: 'Usuários de Área', value: totalUsers,          color: '#3b82f6' },
+            { label: 'Usuários',          value: (users || []).length, color: '#8b5cf6' },
+            { label: 'Setores/Áreas',     value: (areas || []).length, color: '#10b981' },
           ].map(k => (
             <div key={k.label} style={{ background: 'var(--color-bg-card)', border: `1px solid ${k.color}25`, borderTop: `3px solid ${k.color}`, borderRadius: 'var(--radius-md)', padding: '10px 18px', textAlign: 'center', minWidth: '80px' }}>
               <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--color-text-primary)', lineHeight: 1 }}>{k.value}</div>
@@ -565,31 +578,76 @@ export default function AdminPage() {
         </div>
       </div>
 
+      {/* ── Tabs ──────────────────────────────────── */}
+      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--color-border)', paddingBottom: '1px' }}>
+        <button
+          onClick={() => { setActiveTab('users'); setSearch(''); }}
+          style={{
+            padding: '10px 20px',
+            background: 'transparent',
+            border: 'none',
+            borderBottom: activeTab === 'users' ? '3px solid var(--color-accent)' : '3px solid transparent',
+            color: activeTab === 'users' ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+            fontWeight: 700,
+            fontSize: '0.9rem',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <Users size={16} /> Usuários
+        </button>
+        <button
+          onClick={() => { setActiveTab('areas'); setSearch(''); }}
+          style={{
+            padding: '10px 20px',
+            background: 'transparent',
+            border: 'none',
+            borderBottom: activeTab === 'areas' ? '3px solid var(--color-accent)' : '3px solid transparent',
+            color: activeTab === 'areas' ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+            fontWeight: 700,
+            fontSize: '0.9rem',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <Building2 size={16} /> Áreas
+        </button>
+      </div>
+
       {/* ── Toolbar ───────────────────────────────── */}
       <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
           {/* Search */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '8px 14px', minWidth: '220px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '8px 14px', minWidth: '240px' }}>
             <Search size={15} color="var(--color-text-tertiary)" />
             <input
               id="admin-search"
-              placeholder="Buscar por nome, e-mail ou área..."
+              placeholder={activeTab === 'users' ? "Buscar por nome, e-mail ou área..." : "Buscar por nome da área..."}
               value={search}
               onChange={e => setSearch(e.target.value)}
               style={{ border: 'none', background: 'transparent', color: 'var(--color-text-primary)', outline: 'none', fontSize: '0.85rem', width: '100%' }}
             />
           </div>
-          {/* Role filter */}
-          <select
-            id="admin-role-filter"
-            value={roleFilter}
-            onChange={e => setRoleFilter(e.target.value)}
-            style={{ padding: '8px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-card)', color: 'var(--color-text-primary)', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
-          >
-            <option value="">Todos os perfis</option>
-            <option value="Admin">Administradores</option>
-            <option value="User">Usuários de Área</option>
-          </select>
+          {/* Role filter (Only for users tab) */}
+          {activeTab === 'users' && (
+            <select
+              id="admin-role-filter"
+              value={roleFilter}
+              onChange={e => setRoleFilter(e.target.value)}
+              style={{ padding: '8px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-card)', color: 'var(--color-text-primary)', fontSize: '0.85rem', outline: 'none', cursor: 'pointer' }}
+            >
+              <option value="">Todos os perfis</option>
+              <option value="Admin">Administradores</option>
+              <option value="User">Usuários de Área</option>
+              <option value="Viewer">Somente Leitura</option>
+            </select>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: '10px' }}>
@@ -601,60 +659,305 @@ export default function AdminPage() {
           >
             <RotateCcw size={14} /> {resetConfirm ? 'Confirmar reset?' : 'Restaurar padrão'}
           </button>
-          {/* Add user */}
-          <button
-            id="add-user-btn"
-            onClick={() => setShowModal(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '8px 18px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.88rem', cursor: 'pointer', boxShadow: '0 2px 8px rgba(37,99,235,0.25)', transition: 'all 0.2s' }}
-            onMouseOver={e => e.currentTarget.style.transform = 'translateY(-1px)'}
-            onMouseOut={e  => e.currentTarget.style.transform = 'translateY(0)'}
-          >
-            <UserPlus size={15} /> Novo Usuário
-          </button>
-        </div>
-      </div>
-
-      {/* ── Table ─────────────────────────────────── */}
-      <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ overflowX: 'auto' }}>
-          {filtered.length === 0 ? (
-            <div style={{ padding: '48px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: '0.88rem' }}>
-              Nenhum usuário encontrado.
-            </div>
+          
+          {/* Add user or add area */}
+          {activeTab === 'users' ? (
+            <button
+              id="add-user-btn"
+              onClick={() => setShowModal(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '8px 18px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.88rem', cursor: 'pointer', boxShadow: '0 2px 8px rgba(37,99,235,0.25)', transition: 'all 0.2s' }}
+              onMouseOver={e => e.currentTarget.style.transform = 'translateY(-1px)'}
+              onMouseOut={e  => e.currentTarget.style.transform = 'translateY(0)'}
+            >
+              <UserPlus size={15} /> Novo Usuário
+            </button>
           ) : (
-            <table style={{ width: '100%', minWidth: '640px', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
-              <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
-                <tr style={{ background: 'var(--color-bg-hover)', borderBottom: '1px solid var(--color-border)' }}>
-                  <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Usuário</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nível de Acesso</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Área</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(u => (
-                  <EditableUserRow
-                    key={u.id}
-                    u={u}
-                    currentUserId={currentUser?.id}
-                    onSave={updateUser}
-                    onDelete={deleteUser}
-                  />
-                ))}
-              </tbody>
-            </table>
+            <button
+              id="add-area-btn"
+              onClick={() => { setAreaToEdit(null); setShowAreaModal(true); }}
+              style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '8px 18px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.88rem', cursor: 'pointer', boxShadow: '0 2px 8px rgba(37,99,235,0.25)', transition: 'all 0.2s' }}
+              onMouseOver={e => e.currentTarget.style.transform = 'translateY(-1px)'}
+              onMouseOut={e  => e.currentTarget.style.transform = 'translateY(0)'}
+            >
+              <Building2 size={15} /> Nova Área
+            </button>
           )}
         </div>
       </div>
 
-      {/* ── Add User Modal ─────────────────────────── */}
+      {/* ── Active Tab Content ────────────────────── */}
+      {activeTab === 'users' ? (
+        /* Users Tab */
+        <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            {filteredUsers.length === 0 ? (
+              <div style={{ padding: '48px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: '0.88rem' }}>
+                Nenhum usuário encontrado.
+              </div>
+            ) : (
+              <table style={{ width: '100%', minWidth: '640px', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
+                  <tr style={{ background: 'var(--color-bg-hover)', borderBottom: '1px solid var(--color-border)' }}>
+                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Usuário</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nível de Acesso</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Área</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredUsers.map(u => (
+                    <EditableUserRow
+                      key={u.id}
+                      u={u}
+                      currentUserId={currentUser?.id}
+                      onSave={updateUser}
+                      onDelete={deleteUser}
+                      areaColors={areaColors}
+                      areasList={areasList}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* Areas Tab */
+        <div className="panel" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            {filteredAreas.length === 0 ? (
+              <div style={{ padding: '48px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: '0.88rem' }}>
+                Nenhuma área encontrada.
+              </div>
+            ) : (
+              <table style={{ width: '100%', minWidth: '600px', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+                <thead>
+                  <tr style={{ background: 'var(--color-bg-hover)', borderBottom: '1px solid var(--color-border)' }}>
+                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', width: '60px' }}>ID</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Setor / Área</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', width: '120px' }}>Cor</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right', fontWeight: 700, color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', width: '220px' }}>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredAreas.map(a => (
+                    <tr
+                      key={a.id}
+                      style={{ borderBottom: '1px solid var(--color-border-light)', transition: 'background 0.15s' }}
+                      onMouseOver={e  => e.currentTarget.style.background = 'var(--color-bg-hover)'}
+                      onMouseOut={e   => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <td style={{ padding: '14px 16px', color: 'var(--color-text-secondary)', fontWeight: 600 }}>{a.id}</td>
+                      <td style={{ padding: '14px 16px', fontWeight: 700, color: 'var(--color-text-primary)' }}>{a.name}</td>
+                      <td style={{ padding: '14px 16px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ width: '14px', height: '14px', borderRadius: '50%', background: a.color || '#64748b', border: '1px solid rgba(0,0,0,0.1)' }} />
+                          <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: 'var(--color-text-tertiary)' }}>
+                            {(a.color || '#64748b').toUpperCase()}
+                          </span>
+                        </div>
+                      </td>
+                      <td style={{ padding: '14px 16px' }}>
+                        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                          <button
+                            id={`edit-area-${a.id}`}
+                            onClick={() => { setAreaToEdit(a); setShowAreaModal(true); }}
+                            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-secondary)', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }}
+                            onMouseOver={e => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
+                            onMouseOut={e  => { e.currentTarget.style.borderColor = 'var(--color-border)';  e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
+                          >
+                            <Pencil size={13} /> Editar
+                          </button>
+                          <button
+                            id={`delete-area-${a.id}`}
+                            onClick={async () => {
+                              if (confirm(`Tem certeza de que deseja remover a área "${a.name}"? Isso removerá a associação de todos os usuários a essa área.`)) {
+                                const res = await deleteArea(a.docId || String(a.id));
+                                if (res && res.success === false) {
+                                  alert(res.message);
+                                }
+                              }
+                            }}
+                            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-tertiary)', fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer', transition: 'all 0.15s' }}
+                            onMouseOver={e => { e.currentTarget.style.borderColor = '#ef4444'; e.currentTarget.style.color = '#ef4444'; }}
+                            onMouseOut={e  => { e.currentTarget.style.borderColor = 'var(--color-border)';  e.currentTarget.style.color = 'var(--color-text-tertiary)'; }}
+                          >
+                            <Trash2 size={13} /> Remover
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Add/Edit User Modal ────────────────────── */}
       {showModal && (
         <AddUserModal
           onClose={() => setShowModal(false)}
           onAdd={addUser}
+          areasList={areasList}
         />
       )}
 
+      {/* ── Add/Edit Area Modal ────────────────────── */}
+      {showAreaModal && (
+        <AreaModal
+          onClose={() => { setShowAreaModal(false); setAreaToEdit(null); }}
+          onSave={areaToEdit ? updateArea : addArea}
+          areaToEdit={areaToEdit}
+        />
+      )}
+
+    </div>
+  );
+}
+
+// ── Area Modal ─────────────────────────────────────────────
+function AreaModal({ onClose, onSave, areaToEdit }) {
+  const [name, setName] = useState(areaToEdit ? areaToEdit.name : '');
+  const [color, setColor] = useState(areaToEdit ? areaToEdit.color : '#3b82f6');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const PRESETS = [
+    '#10b981', '#64748b', '#06b6d4', '#3b82f6', '#14b8a6',
+    '#84cc16', '#6366f1', '#f59e0b', '#8b5cf6', '#f97316',
+    '#ec4899', '#ef4444'
+  ];
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) {
+      setError('O nome da área é obrigatório.');
+      return;
+    }
+    setSaving(true);
+    try {
+      let res;
+      if (areaToEdit) {
+        res = await onSave(areaToEdit.docId || String(areaToEdit.id), { name, color });
+      } else {
+        res = await onSave({ name, color });
+      }
+      if (res && res.success === false) {
+        setError(res.message || 'Erro ao salvar área.');
+      } else {
+        onClose();
+      }
+    } catch (err) {
+      setError(err.message || 'Erro ao salvar área.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px', backdropFilter: 'blur(4px)' }}>
+      <div style={{ background: 'var(--color-bg-card)', borderRadius: 'var(--radius-xl, 16px)', boxShadow: '0 24px 64px rgba(0,0,0,0.3)', width: '100%', maxWidth: '440px', overflow: 'hidden', animation: 'slideDown 0.2s ease-out' }}>
+        {/* Header */}
+        <div style={{ padding: '24px 28px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ width: '38px', height: '38px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Building2 size={18} color="#fff" />
+            </div>
+            <div>
+              <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--color-text-primary)' }}>
+                {areaToEdit ? 'Editar Área' : 'Nova Área'}
+              </h3>
+              <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>
+                {areaToEdit ? 'Altere as propriedades da área' : 'Defina os detalhes do novo setor'}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '4px' }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {error && (
+            <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 'var(--radius-md)', color: '#ef4444', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertCircle size={15} /> {error}
+            </div>
+          )}
+
+          <div>
+            <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>Nome da Área *</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="Ex: Recursos Humanos"
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '8px' }}>Cor de Identificação</label>
+            
+            {/* Color Presets */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '8px', marginBottom: '12px' }}>
+              {PRESETS.map(p => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setColor(p)}
+                  style={{
+                    height: '28px',
+                    borderRadius: '6px',
+                    background: p,
+                    border: color === p ? '2.5px solid var(--color-text-primary)' : '1px solid rgba(0,0,0,0.1)',
+                    cursor: 'pointer',
+                    boxShadow: color === p ? '0 0 0 2px var(--color-accent)' : 'none',
+                    transition: 'transform 0.1s'
+                  }}
+                  onMouseOver={e => e.currentTarget.style.transform = 'scale(1.08)'}
+                  onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}
+                />
+              ))}
+            </div>
+
+            {/* Custom Color Input */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <input
+                type="color"
+                value={color}
+                onChange={e => setColor(e.target.value)}
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  padding: 0,
+                  border: '1px solid var(--color-border)',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  background: 'none'
+                }}
+              />
+              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-secondary)', fontFamily: 'monospace' }}>
+                {color.toUpperCase()} (Cor Personalizada)
+              </span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', paddingTop: '8px', borderTop: '1px solid var(--color-border-light)' }}>
+            <button type="button" onClick={onClose} style={{ padding: '10px 18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-secondary)', fontWeight: 600, fontSize: '0.88rem', cursor: 'pointer' }}>
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              style={{ padding: '10px 22px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.88rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '7px' }}
+            >
+              <Check size={15} /> {saving ? 'Salvando...' : 'Salvar'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

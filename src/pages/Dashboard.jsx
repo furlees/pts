@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import { Users, ArrowUpRight, ArrowDownRight, MessageSquare, PhoneForwarded, Building2, TrendingUp, Activity, RotateCw, Calendar, Clock, CheckCircle, BarChart3, PieChart, Hash, XCircle, Ticket, ChevronRight } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart as RechartsPie, Pie, Cell } from 'recharts';
 import { useHelenaDataWithAutoRefresh } from '../hooks/useHelenaData';
@@ -25,6 +26,8 @@ function formatTimeAgo(dateString) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isViewer = user?.role === 'Viewer';
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
   const [demandView, setDemandView] = useState('hora'); // 'hora' | 'dia'
   
@@ -192,15 +195,15 @@ export default function Dashboard() {
                 return (
                   <div 
                     key={item.id || index} 
-                    onClick={() => navigate(`/leads?id=${item.id}`)}
+                    onClick={() => !isViewer && navigate(`/leads?id=${item.id}`)}
                     style={{ 
                       display: 'flex', alignItems: 'center', gap: '14px', padding: '14px 24px', 
                       borderBottom: index < recentActivity.length - 1 ? '1px solid var(--color-border-light)' : 'none', 
                       transition: 'background-color var(--transition-fast)',
-                      cursor: 'pointer'
+                      cursor: isViewer ? 'default' : 'pointer'
                     }}
-                    onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'}
-                    onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+                    onMouseOver={(e) => { if (!isViewer) e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'; }}
+                    onMouseOut={(e) => { if (!isViewer) e.currentTarget.style.backgroundColor = 'transparent'; }}
                   >
                     <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'var(--color-accent-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-accent)', fontWeight: '700', fontSize: '0.75rem', flexShrink: 0 }}>
                       {iniciais}

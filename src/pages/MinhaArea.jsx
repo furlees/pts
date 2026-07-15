@@ -14,23 +14,6 @@ const STATUS_CONFIG = {
   pendente:      { label: 'Pendente',       color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',  badgeClass: 'pendente'      },
 };
 
-const AREA_COLORS = {
-  'Administrativo':          '#10b981',
-  'CEFI':                    '#64748b',
-  'CET':                     '#06b6d4',
-  'Comercial':               '#3b82f6',
-  'Comunicação':             '#14b8a6',
-  'Compras':                 '#84cc16',
-  'CPL':                     '#6366f1',
-  'Eventos':                 '#06b6d4',
-  'Financeiro':              '#f59e0b',
-  'Jurídico':                '#8b5cf6',
-  'Hubiz':                   '#f97316',
-  'Inovação e Projetos':     '#ec4899',
-  'Parcerias Estratégicas':  '#3b82f6',
-  'RH':                      '#ec4899',
-};
-
 function formatDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -215,16 +198,24 @@ function TicketCard({ lead, onStatusChange }) {
 
 // ── Main Page ──────────────────────────────────────────────
 export default function MinhaArea() {
-  const { userArea, isAdmin } = useAuth();
+  const { userArea, isAdmin, areas = [] } = useAuth();
   
+  const areaColors = useMemo(() => {
+    const colors = {};
+    (areas || []).forEach(a => {
+      colors[a.name] = a.color || '#64748b';
+    });
+    return colors;
+  }, [areas]);
+
   const userAreas = useMemo(() => {
     if (isAdmin && !userArea) {
-      return Object.keys(AREA_COLORS);
+      return (areas || []).map(a => a.name);
     }
     return userArea ? userArea.split(',').map(a => a.trim()).filter(Boolean) : [];
-  }, [userArea, isAdmin]);
+  }, [userArea, isAdmin, areas]);
 
-  const areaColor = userArea ? (AREA_COLORS[userAreas[0]] || 'var(--color-accent)') : 'var(--color-accent)';
+  const areaColor = userArea ? (areaColors[userAreas[0]] || 'var(--color-accent)') : 'var(--color-accent)';
 
   const [leads, setLeads]       = useState([]);
   const [loading, setLoading]   = useState(true);

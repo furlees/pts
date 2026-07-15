@@ -58,6 +58,7 @@ if (HAS_FIREBASE) {
 
 export function AuthProvider({ children }) {
   const [users, setUsers] = useState([]);
+  const [areas, setAreas] = useState([]);
   const [user,  setUser]  = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -81,6 +82,38 @@ export function AuthProvider({ children }) {
               password: seedUser.password, // Stored temporarily for migration
               role: seedUser.role,
               area: seedUser.area
+            });
+          }
+        }
+
+        // Seed areas
+        const areasCol = collection(db, 'areas');
+        const areasSnapshot = await getDocs(areasCol);
+        if (areasSnapshot.empty) {
+          console.log("Firestore areas collection is empty. Seeding...");
+          const DEFAULT_AREAS = [
+            { name: 'Administrativo', color: '#10b981' },
+            { name: 'CEFI', color: '#64748b' },
+            { name: 'CET', color: '#06b6d4' },
+            { name: 'Comercial', color: '#3b82f6' },
+            { name: 'Comunicação', color: '#14b8a6' },
+            { name: 'Compras', color: '#84cc16' },
+            { name: 'CPL', color: '#6366f1' },
+            { name: 'Eventos', color: '#06b6d4' },
+            { name: 'Financeiro', color: '#f59e0b' },
+            { name: 'Jurídico', color: '#8b5cf6' },
+            { name: 'Hubiz', color: '#f97316' },
+            { name: 'Inovação e Projetos', color: '#ec4899' },
+            { name: 'Parcerias Estratégicas', color: '#3b82f6' },
+            { name: 'RH', color: '#ec4899' },
+            { name: 'Cel40', color: '#6b7280' } // Seed Cel40 so it exists initially
+          ];
+          for (let i = 0; i < DEFAULT_AREAS.length; i++) {
+            const area = DEFAULT_AREAS[i];
+            await setDoc(doc(db, 'areas', `area_${i + 1}`), {
+              id: i + 1,
+              name: area.name,
+              color: area.color
             });
           }
         }
@@ -176,6 +209,31 @@ export function AuthProvider({ children }) {
     return () => unsubscribe();
   }, [user]);
 
+  // 4. Sync areas list from Firestore in real-time
+  useEffect(() => {
+    if (!HAS_FIREBASE || !user) {
+      setAreas([]);
+      return;
+    }
+
+    const areasCol = collection(db, 'areas');
+
+    const unsubscribe = onSnapshot(areasCol, (snapshot) => {
+      let list = snapshot.docs.map(docDoc => ({ 
+        docId: docDoc.id, 
+        ...docDoc.data() 
+      }));
+
+      // Sort by ID to preserve listing order
+      list.sort((a, b) => a.id - b.id);
+      setAreas(list);
+    }, (error) => {
+      console.error("Firestore onSnapshot error (areas):", error);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
   // ── Auth ──────────────────────────────────────────────
   const login = useCallback(async (email, password) => {
     if (!HAS_FIREBASE) {
@@ -255,7 +313,7 @@ export function AuthProvider({ children }) {
         name:     userData.name.trim(),
         email:    cleanEmail,
         role:     userData.role,
-        area:     userData.role === 'Admin' ? null : (userData.area || null),
+        area:     userData.area || null,
       };
 
       await setDoc(doc(db, 'users', uid), newUser);
@@ -275,7 +333,6 @@ export function AuthProvider({ children }) {
 
     const targetDocId = fresh.docId || docId;
     const merged = { ...fresh, ...changes };
-    if (merged.role === 'Admin') merged.area = null;
 
     const dataToSave = { ...merged };
     delete dataToSave.docId;
@@ -309,12 +366,113 @@ export function AuthProvider({ children }) {
     }
   }, [users, user]);
 
+  /** Add a new area */
+  const addArea = useCallback(async (areaData) => {
+    if (!HAS_FIREBASE) return { success: false, message: 'Banco offline.' };
+
+    const nextId = areas.length > 0 ? Math.max(...areas.map(a => a.id)) + 1 : 1;
+    const cleanName = areaData.name.trim();
+
+    if (areas.some(a => a.name.toLowerCase() === cleanName.toLowerCase())) {
+      return { success: false, message: 'Já existe uma área com este nome.' };
+    }
+
+    try {
+      const docId = `area_${nextId}`;
+      const newArea = {
+        id: nextId,
+        name: cleanName,
+        color: areaData.color || '#64748b'
+      };
+
+      await setDoc(doc(db, 'areas', docId), newArea);
+      return { success: true };
+    } catch (error) {
+      console.error("Firebase error in addArea:", error);
+      return { success: false, message: 'Erro ao cadastrar área no Firestore.' };
+    }
+  }, [areas]);
+
+  /** Update an existing area */
+  const updateArea = useCallback(async (docId, changes) => {
+    if (!HAS_FIREBASE) return { success: false, message: 'Banco offline.' };
+
+    const fresh = areas.find(a => a.docId === docId || String(a.id) === String(docId));
+    if (!fresh) return { success: false, message: 'Área não encontrada.' };
+
+    const targetDocId = fresh.docId || docId;
+    const cleanName = changes.name ? changes.name.trim() : fresh.name;
+
+    if (changes.name && areas.some(a => a.name.toLowerCase() === cleanName.toLowerCase() && a.docId !== targetDocId)) {
+      return { success: false, message: 'Já existe outra área com este nome.' };
+    }
+
+    const merged = { ...fresh, ...changes, name: cleanName };
+    const dataToSave = { ...merged };
+    delete dataToSave.docId;
+
+    try {
+      await setDoc(doc(db, 'areas', targetDocId), dataToSave);
+
+      // Propagate name change to users' areas
+      if (changes.name && fresh.name !== cleanName) {
+        const usersToUpdate = users.filter(u => u.area && u.area.split(',').map(a => a.trim()).includes(fresh.name));
+        for (const u of usersToUpdate) {
+          const newAreas = u.area.split(',').map(a => {
+            const trimmed = a.trim();
+            return trimmed === fresh.name ? cleanName : trimmed;
+          }).filter(Boolean).join(', ');
+          
+          const uData = { ...u, area: newAreas || null };
+          const uDocId = u.docId;
+          delete uData.docId;
+          await setDoc(doc(db, 'users', uDocId), uData);
+        }
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error("Firebase error in updateArea:", error);
+      return { success: false, message: 'Erro ao atualizar área.' };
+    }
+  }, [areas, users]);
+
+  /** Delete an area */
+  const deleteArea = useCallback(async (docId) => {
+    const fresh = areas.find(a => a.docId === docId || String(a.id) === String(docId));
+    if (!fresh) return { success: false, message: 'Área não encontrada.' };
+
+    const targetDocId = fresh.docId || docId;
+
+    try {
+      await deleteDoc(doc(db, 'areas', targetDocId));
+
+      // Remove this area from users
+      const usersToUpdate = users.filter(u => u.area && u.area.split(',').map(a => a.trim()).includes(fresh.name));
+      for (const u of usersToUpdate) {
+        const newAreas = u.area.split(',').map(a => a.trim()).filter(a => a !== fresh.name).join(', ');
+        const dataToSave = { ...u, area: newAreas || null };
+        const uDocId = u.docId;
+        delete dataToSave.docId;
+        await setDoc(doc(db, 'users', uDocId), dataToSave);
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error("Firebase error in deleteArea:", error);
+      return { success: false, message: 'Erro ao deletar área.' };
+    }
+  }, [areas, users]);
+
   /** Reset all users back to seed data */
   const resetUsersToSeed = useCallback(async () => {
     if (!HAS_FIREBASE) return;
     try {
+      // 1. Delete users
       for (const u of users) {
-        await deleteDoc(doc(db, 'users', u.docId));
+        if (u.docId) {
+          await deleteDoc(doc(db, 'users', u.docId));
+        }
       }
       for (const seedUser of USERS_SEED) {
         await setDoc(doc(db, 'users', String(seedUser.id)), {
@@ -326,20 +484,53 @@ export function AuthProvider({ children }) {
           area: seedUser.area
         });
       }
+
+      // 2. Delete areas
+      for (const a of areas) {
+        if (a.docId) {
+          await deleteDoc(doc(db, 'areas', a.docId));
+        }
+      }
+      const DEFAULT_AREAS = [
+        { name: 'Administrativo', color: '#10b981' },
+        { name: 'CEFI', color: '#64748b' },
+        { name: 'CET', color: '#06b6d4' },
+        { name: 'Comercial', color: '#3b82f6' },
+        { name: 'Comunicação', color: '#14b8a6' },
+        { name: 'Compras', color: '#84cc16' },
+        { name: 'CPL', color: '#6366f1' },
+        { name: 'Eventos', color: '#06b6d4' },
+        { name: 'Financeiro', color: '#f59e0b' },
+        { name: 'Jurídico', color: '#8b5cf6' },
+        { name: 'Hubiz', color: '#f97316' },
+        { name: 'Inovação e Projetos', color: '#ec4899' },
+        { name: 'Parcerias Estratégicas', color: '#3b82f6' },
+        { name: 'RH', color: '#ec4899' },
+        { name: 'Cel40', color: '#6b7280' }
+      ];
+      for (let i = 0; i < DEFAULT_AREAS.length; i++) {
+        const area = DEFAULT_AREAS[i];
+        await setDoc(doc(db, 'areas', `area_${i + 1}`), {
+          id: i + 1,
+          name: area.name,
+          color: area.color
+        });
+      }
     } catch (error) {
       console.error("Firebase error in resetUsersToSeed:", error);
     }
-  }, [users]);
+  }, [users, areas]);
 
   const isAdmin  = user?.role === 'Admin';
   const userArea = user?.area || null;
 
   return (
     <AuthContext.Provider value={{
-      user, users, loading,
+      user, users, areas, loading,
       login, logout,
       isAdmin, userArea,
       addUser, updateUser, deleteUser, resetUsersToSeed,
+      addArea, updateArea, deleteArea
     }}>
       {children}
     </AuthContext.Provider>

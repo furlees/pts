@@ -1,7 +1,8 @@
+import { useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, MessageCircle, Settings, Sun, Moon, Database, LogOut, BarChart2, Building2, UserCog, LayoutGrid } from 'lucide-react';
+import { LayoutDashboard, MessageCircle, Settings, Sun, Moon, Database, LogOut, BarChart2, Building2, UserCog, LayoutGrid, Lock } from 'lucide-react';
 
 const LOGO_LIGHT = 'https://usxkmalddprlijlmoufd.supabase.co/storage/v1/object/public/imagens/logopts.jpeg';
 const LOGO_DARK  = 'https://usxkmalddprlijlmoufd.supabase.co/storage/v1/object/public/imagens/logopts1.enc';
@@ -22,33 +23,31 @@ const AREA_NAV = [
   { label: 'Configurações', path: '/settings',   icon: Settings },
 ];
 
-// Colour per area for the badge
-const AREA_COLORS = {
-  'Administrativo':        '#10b981',
-  'CEFI':                  '#64748b',
-  'CET':                   '#06b6d4',
-  'Comercial':             '#3b82f6',
-  'Comunicação':           '#14b8a6',
-  'Compras':               '#84cc16',
-  'CPL':                   '#6366f1',
-  'Eventos':               '#06b6d4',
-  'Financeiro':            '#f59e0b',
-  'Jurídico':              '#8b5cf6',
-  'Hubiz':                 '#f97316',
-  'Inovação e Projetos':   '#ec4899',
-  'Parcerias Estratégicas': '#3b82f6',
-  'RH':                    '#ec4899',
-};
+const VIEWER_NAV = [
+  { label: 'Dashboard Helena',   path: '/',          icon: LayoutDashboard },
+  { label: 'Dashboard de Metas', path: '/executivo', icon: LayoutGrid },
+  { label: 'Indicadores',        path: '/tickets',   icon: BarChart2 },
+];
 
 export default function Sidebar() {
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
-  const { user, logout, isAdmin, userArea } = useAuth();
+  const { user, logout, isAdmin, userArea, areas = [] } = useAuth();
+  const isViewer = user?.role === 'Viewer';
   const navigate = useNavigate();
+  const [showDenial, setShowDenial] = useState(false);
+
+  const areaColors = useMemo(() => {
+    const colors = {};
+    (areas || []).forEach(a => {
+      colors[a.name] = a.color || '#64748b';
+    });
+    return colors;
+  }, [areas]);
 
   const logoUrl    = theme === 'dark' ? LOGO_DARK : LOGO_LIGHT;
-  const navItems   = isAdmin ? ADMIN_NAV : AREA_NAV;
-  const areaColor  = userArea ? (AREA_COLORS[userArea.split(',')[0].trim()] || 'var(--color-accent)') : null;
+  const navItems   = (isAdmin || isViewer) ? ADMIN_NAV : AREA_NAV;
+  const areaColor  = userArea ? (areaColors[userArea.split(',')[0].trim()] || 'var(--color-accent)') : null;
 
   const handleLogout = () => {
     logout();
@@ -82,7 +81,7 @@ export default function Sidebar() {
             gap: '6px',
           }}>
             {userAreas.map(area => {
-              const col = AREA_COLORS[area] || 'var(--color-accent)';
+              const col = areaColors[area] || 'var(--color-accent)';
               return (
                 <div
                   key={area}
@@ -115,10 +114,17 @@ export default function Sidebar() {
         {navItems.map((item) => {
           const Icon     = item.icon;
           const isActive = location.pathname === item.path;
+          const isRestricted = isViewer && !['/', '/tickets', '/executivo'].includes(item.path);
           return (
             <NavLink
               key={item.path}
               to={item.path}
+              onClick={(e) => {
+                if (isRestricted) {
+                  e.preventDefault();
+                  setShowDenial(true);
+                }
+              }}
               className={`sidebar-link ${isActive ? 'active' : ''}`}
               id={`nav-${item.path.replace(/\//g, '') || 'dashboard'}`}
             >
@@ -167,7 +173,7 @@ export default function Sidebar() {
             <div className="sidebar-footer-info" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               <span className="sidebar-footer-name">{user?.name || 'Administrador'}</span>
               <span className="sidebar-footer-role">
-                {isAdmin ? 'Administrador' : (userArea || 'Usuário')}
+                {isViewer ? 'Somente Leitura' : (isAdmin ? 'Administrador' : (userArea || 'Usuário'))}
               </span>
             </div>
           </div>
@@ -180,6 +186,82 @@ export default function Sidebar() {
           </button>
         </div>
       </div>
+
+      {showDenial && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.6)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px',
+          backdropFilter: 'blur(5px)',
+          pointerEvents: 'auto'
+        }}>
+          <div style={{
+            background: 'var(--color-bg-card)',
+            borderRadius: 'var(--radius-xl, 16px)',
+            boxShadow: '0 24px 64px rgba(0,0,0,0.3)',
+            width: '100%',
+            maxWidth: '420px',
+            padding: '32px',
+            textAlign: 'center',
+            border: '1px solid var(--color-border)',
+            animation: 'slideDown 0.2s ease-out'
+          }}>
+            <div style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '50%',
+              background: 'rgba(239,68,68,0.1)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              margin: '0 auto 20px',
+              color: '#ef4444'
+            }}>
+              <Lock size={32} />
+            </div>
+            <h3 style={{
+              fontSize: '1.25rem',
+              fontWeight: 700,
+              color: 'var(--color-text-primary)',
+              marginBottom: '12px'
+            }}>
+              Acesso Restrito
+            </h3>
+            <p style={{
+              fontSize: '0.9rem',
+              color: 'var(--color-text-secondary)',
+              lineHeight: '1.6',
+              margin: '0 0 24px 0'
+            }}>
+              Essa função não está liberada pro seu usuário, solicite ao responsável.
+            </p>
+            <button
+              onClick={() => setShowDenial(false)}
+              style={{
+                width: '100%',
+                padding: '12px',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--color-accent)',
+                color: '#fff',
+                border: 'none',
+                fontWeight: 700,
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                transition: 'filter 0.2s'
+              }}
+              onMouseOver={e => e.currentTarget.style.filter = 'brightness(1.1)'}
+              onMouseOut={e => e.currentTarget.style.filter = 'none'}
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

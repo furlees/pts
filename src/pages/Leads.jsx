@@ -3,12 +3,95 @@ import { useLocation } from 'react-router-dom';
 import { useLeadsData } from '../hooks/useHelenaData';
 import { useAuth } from '../contexts/AuthContext';
 import { updateLeadAcuracia, updateTicketStatus, fetchMessagesForPhone, updateLeadFields } from '../services/helenaService';
-import { Calendar, Search, Download, UserCircle, Building, Briefcase, Mail, Phone, ArrowRight, AlignLeft, User, CheckCircle, XCircle, RotateCcw, Ticket, Clock, Pencil, History, Send } from 'lucide-react';
+import { Calendar, Search, Download, UserCircle, Building, Briefcase, Mail, Phone, ArrowRight, AlignLeft, User, CheckCircle, XCircle, RotateCcw, Ticket, Clock, Pencil, History, Send, MessageSquare } from 'lucide-react';
 import { db } from '../services/firebase';
-import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, where, doc, setDoc, onSnapshot } from 'firebase/firestore';
+
+function processMessageBlocks(rawMessageRow, msgIndex) {
+  let obj = rawMessageRow.message;
+  
+  if (typeof obj === 'string') {
+    try {
+      obj = JSON.parse(obj);
+    } catch(e) { }
+  }
+
+  let rawString = '';
+  let isBot = false;
+
+  // 1. Extração SOMENTE do "content" ou do "text" root, IGNORANDO TODO O RESTO.
+  if (obj && typeof obj === 'object') {
+    if (obj.content !== undefined && obj.content !== null) {
+      if (typeof obj.content === 'string') {
+        rawString = obj.content;
+      } else {
+        rawString = obj.content.text || JSON.stringify(obj.content);
+      }
+      isBot = obj.type === 'ai';
+    } else if (obj.text !== undefined && obj.text !== null) {
+      rawString = typeof obj.text === 'string' ? obj.text : JSON.stringify(obj.text);
+      isBot = false;
+    } else {
+      return [];
+    }
+  } else if (typeof obj === 'string') {
+    rawString = obj;
+  }
+
+  if (!rawString || rawString.trim() === '') return [];
+
+  let cleanedString = rawString;
+  if (cleanedString.includes('{"text":')) {
+    let firstBrace = cleanedString.indexOf('{');
+    let lastBrace = cleanedString.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      let possibleJson = cleanedString.substring(firstBrace, lastBrace + 1);
+      try {
+        let parsed = JSON.parse(possibleJson);
+        if (parsed.text) {
+          cleanedString = cleanedString.substring(0, firstBrace) + parsed.text + cleanedString.substring(lastBrace + 1);
+        }
+      } catch(e) {
+        let match = cleanedString.match(/"text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/);
+        if (match && match[1]) {
+          try {
+             let unescaped = JSON.parse('"' + match[1] + '"');
+             cleanedString = cleanedString.substring(0, firstBrace) + unescaped + cleanedString.substring(lastBrace + 1);
+          } catch(ex) {
+             cleanedString = cleanedString.substring(0, firstBrace) + match[1] + cleanedString.substring(lastBrace + 1);
+          }
+        }
+      }
+    }
+  }
+
+  cleanedString = cleanedString.trim();
+  if (!cleanedString) return [];
+
+  const blocks = cleanedString.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+
+  return blocks.map((blockTxt, blockIdx) => {
+    let html = blockTxt
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|\s)\*(.*?)\*(?=\s|$)/g, '$1<strong>$2</strong>')
+      .replace(/_(.*?)_/g, '<em>$1</em>')
+      .replace(/~(.*?)~/g, '<del>$1</del>')
+      .replace(/\n/g, '<br/>');
+
+    const cssColor = isBot ? 'received' : 'sent';
+    
+    return {
+      id: `${rawMessageRow.id || msgIndex}-${blockIdx}`,
+      html: html,
+      date: rawMessageRow.date,
+      sender: isBot ? 'Helena' : 'Lead',
+      cssColor: cssColor
+    };
+  });
+}
 
 export default function Leads() {
-  const { user, isAdmin, userArea } = useAuth();
+  const { user, isAdmin, userArea, areas = [], users = [] } = useAuth();
   const location = useLocation();
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
   const [searchTerm, setSearchTerm] = useState('');
@@ -21,11 +104,36 @@ export default function Leads() {
 
   const { leadsList = [], loading, error, refetch } = useLeadsData(processedDateRange);
 
-  const AREAS_LIST = [
-    'Administrativo', 'CEFI', 'CET', 'Comercial', 'Comunicação',
-    'Compras', 'CPL', 'Eventos', 'Financeiro', 'Jurídico',
-    'Hubiz', 'Inovação e Projetos', 'Parcerias Estratégicas', 'RH',
-  ];
+  const AREAS_LIST = useMemo(() => (areas || []).map(a => a.name), [areas]);
+
+  // Real-time email response statuses for leads
+  const [emailStatuses, setEmailStatuses] = useState({});
+
+  useEffect(() => {
+    if (!db) return;
+    const unsubscribe = onSnapshot(collection(db, 'lead_email_status'), (snapshot) => {
+      const statuses = {};
+      snapshot.docs.forEach(docDoc => {
+        statuses[docDoc.id] = docDoc.data();
+      });
+      setEmailStatuses(statuses);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const updateEmailStatus = async (leadId, respondido) => {
+    if (!db) return;
+    try {
+      await setDoc(doc(db, 'lead_email_status', String(leadId)), {
+        leadId,
+        respondido,
+        dataResposta: respondido ? new Date().toISOString() : null,
+        respondidoPor: respondido ? (user?.name || 'Sistema') : null
+      });
+    } catch (err) {
+      console.error("Erro ao atualizar status de e-mail:", err);
+    }
+  };
 
   // Load editing/auditing history for the selected lead
   const [editHistory, setEditHistory] = useState([]);
@@ -153,6 +261,17 @@ export default function Leads() {
   const [chatMessages, setChatMessages] = useState([]);
   const [loadingChat, setLoadingChat] = useState(false);
   const [includeChatHistory, setIncludeChatHistory] = useState(true);
+  const [showChatModal, setShowChatModal] = useState(false);
+
+  const formattedChatMessages = useMemo(() => {
+    const sorted = [...chatMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const list = [];
+    sorted.forEach((rawMsg, idx) => {
+      const blocks = processMessageBlocks(rawMsg, idx);
+      list.push(...blocks);
+    });
+    return list;
+  }, [chatMessages]);
 
   // Load WhatsApp chat history for selected lead
   useEffect(() => {
@@ -455,6 +574,7 @@ export default function Leads() {
 
       if (db) {
         await addDoc(collection(db, 'lead_forwards'), logData);
+        await updateEmailStatus(selectedLead.id, true);
       }
 
       // 2. Compose mailto link and open it
@@ -541,6 +661,158 @@ export default function Leads() {
       }, ...prev]);
 
       setForwardStep('success');
+    } catch (err) {
+      console.error("Erro ao registrar encaminhamento:", err);
+      alert("Erro ao salvar histórico de envio no banco de dados.");
+    } finally {
+      setSendingForward(false);
+    }
+  };
+
+  const responsibleUsers = useMemo(() => {
+    const selectedLead = leadsList.find(l => l.id === selectedLeadId) || null;
+    if (!selectedLead || !selectedLead.departamento) return [];
+    const dept = selectedLead.departamento.trim().toLowerCase();
+    return (users || []).filter(u => {
+      if (!u.area) return false;
+      return u.area.split(',').map(a => a.trim().toLowerCase()).includes(dept);
+    });
+  }, [selectedLeadId, leadsList, users]);
+
+  const responsibleEmails = useMemo(() => {
+    return responsibleUsers.map(u => u.email).join(', ');
+  }, [responsibleUsers]);
+
+  const handleForwardDirect = async (emailsStr) => {
+    if (!emailsStr.trim()) {
+      alert("Nenhum e-mail de responsável encontrado.");
+      return;
+    }
+
+    const emails = emailsStr.split(',')
+      .map(e => e.trim())
+      .filter(e => e.includes('@'));
+
+    if (emails.length === 0) {
+      alert("Nenhum e-mail de responsável válido encontrado.");
+      return;
+    }
+
+    setSendingForward(true);
+    try {
+      const selectedLead = leadsList.find(l => l.id === selectedLeadId) || null;
+      if (!selectedLead) return;
+
+      // 1. Save forwarding trace to Firestore
+      const logData = {
+        leadId: selectedLead.id,
+        leadNome: selectedLead.nome || 'Anônimo',
+        destinatarios: emails.join(', '),
+        remetenteNome: user?.name || 'Sistema',
+        remetenteEmail: user?.email || '',
+        dataEnvio: new Date().toISOString(),
+        detalhesLead: {
+          empresa: selectedLead.empresa || '',
+          telefone: selectedLead.telefone || '',
+          email: selectedLead.email || '',
+          cargo: selectedLead.cargo || '',
+          departamento: selectedLead.departamento || '',
+          motivo: selectedLead.motivo || '',
+          resumo: selectedLead.resumo || ''
+        }
+      };
+
+      if (db) {
+        await addDoc(collection(db, 'lead_forwards'), logData);
+        await updateEmailStatus(selectedLead.id, true);
+      }
+
+      // 2. Compose mailto link and open it
+      const subject = `[Lead PTS] Encaminhamento de Lead - ${selectedLead.nome || 'Anônimo'}`;
+      
+      let body = `Olá,\n\nSegue o encaminhamento dos dados do lead de atendimento do PTS:\n\n` +
+        `• Nome: ${selectedLead.nome || '—'}\n` +
+        `• Empresa: ${selectedLead.empresa || '—'}\n` +
+        `• E-mail: ${selectedLead.email || '—'}\n` +
+        `• Telefone: ${selectedLead.telefone || '—'}\n` +
+        `• Cargo: ${selectedLead.cargo || '—'}\n` +
+        `• Departamento/Área: ${selectedLead.departamento || '—'}\n\n` +
+        `Motivo do Atendimento:\n${selectedLead.motivo || '—'}\n\n` +
+        `Resumo do Atendimento:\n${selectedLead.resumo || '—'}\n\n`;
+
+      if (includeChatHistory) {
+        const transcript = formatChatMessages(chatMessages);
+        body += `=========================================\n` +
+          `HISTÓRICO COMPLETO DA CONVERSA (WHATSAPP):\n` +
+          `=========================================\n` +
+          `${transcript}\n\n`;
+      }
+
+      // Add feedback/approval links for external managers
+      const supportEmail = 'contato@agenciainova.org.br';
+      const correctSubj = `Retorno Acuracia Helena - Ticket #${selectedLead.id}`;
+      const correctBody = `Confirmado. A triagem da Helena para o lead ${selectedLead.nome || 'Anônimo'} atribuído a ${selectedLead.departamento || 'Sem área'} foi CORRETA.`;
+      const correctMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(correctSubj)}&body=${encodeURIComponent(correctBody)}`;
+
+      const incorrectSubj = `Retorno Acuracia Helena - Ticket #${selectedLead.id}`;
+      const incorrectBody = `A triagem da Helena para o lead ${selectedLead.nome || 'Anônimo'} atribuído a ${selectedLead.departamento || 'Sem área'} foi INCORRETA.\n\nO departamento correto deveria ser: [Digite o setor correto aqui]\n`;
+      const incorrectMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(incorrectSubj)}&body=${encodeURIComponent(incorrectBody)}`;
+
+      body += `=========================================\n` +
+        `AVALIAÇÃO DE ACURÁCIA (Ação Externa do Gestor):\n` +
+        `=========================================\n` +
+        `Se você é o gestor responsável e deseja avaliar a acurácia deste atendimento diretamente pelo seu e-mail (sem precisar fazer login na plataforma), clique em uma das opções abaixo:\n\n` +
+        `👉 Acurácia CORRETA: Clique aqui para confirmar o direcionamento\n` +
+        `   ${correctMailto}\n\n` +
+        `👉 Acurácia INCORRETA: Clique aqui para relatar desvio ou corrigir o setor\n` +
+        `   ${incorrectMailto}\n\n` +
+        `-----------------------------------------\n` +
+        `Encaminhado por: ${user?.name || 'Sistema'} (${user?.email || ''})\n` +
+        `Data do Encaminhamento: ${new Date().toLocaleString('pt-BR')}\n`;
+
+      // Copy formatted HTML template to clipboard
+      try {
+        const htmlContent = generateHtmlBody(selectedLead, chatMessages, includeChatHistory, user);
+        const blobHtml = new Blob([htmlContent], { type: 'text/html' });
+        const blobText = new Blob([body], { type: 'text/plain' });
+        
+        if (typeof ClipboardItem !== 'undefined') {
+          const item = new ClipboardItem({
+            'text/html': blobHtml,
+            'text/plain': blobText
+          });
+          await navigator.clipboard.write([item]);
+        } else {
+          await navigator.clipboard.writeText(body);
+        }
+      } catch (clipErr) {
+        console.error("Erro ao copiar e-mail formatado:", clipErr);
+        try {
+          await navigator.clipboard.writeText(body);
+        } catch (_) {}
+      }
+
+      // Open email composer window
+      const placeholderSubject = `[Lead PTS] Encaminhamento de Lead - ${selectedLead.nome || 'Anônimo'}`;
+      const placeholderBody = `👉 Pressione Ctrl+V (ou Cmd+V) para colar a ficha formatada do lead com a logo do PTS!`;
+
+      if (emailProvider === 'gmail') {
+        const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(emails.join(','))}&su=${encodeURIComponent(placeholderSubject)}&body=${encodeURIComponent(placeholderBody)}`;
+        window.open(gmailUrl, '_blank');
+      } else {
+        const mailtoUrl = `mailto:${encodeURIComponent(emails.join(','))}?subject=${encodeURIComponent(placeholderSubject)}&body=${encodeURIComponent(placeholderBody)}`;
+        window.location.href = mailtoUrl;
+      }
+
+      // Update local state history
+      setForwardHistory(prev => [{
+        id: `local_${Date.now()}`,
+        ...logData
+      }, ...prev]);
+
+      setForwardRecipients(emails.join(', '));
+      setForwardStep('success');
+      setShowForwardModal(true);
     } catch (err) {
       console.error("Erro ao registrar encaminhamento:", err);
       alert("Erro ao salvar histórico de envio no banco de dados.");
@@ -871,6 +1143,43 @@ export default function Leads() {
                             if (ts.status === 'nao_concluido') return <span className="ticket-badge nao-concluido">✕ Não Concluído</span>;
                             return null;
                           })()}
+                          {(() => {
+                            const isReplied = emailStatuses[lead.id]?.respondido;
+                            if (isReplied) {
+                              return (
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '2px 8px',
+                                  borderRadius: '4px',
+                                  background: 'rgba(16,185,129,0.1)',
+                                  color: '#10b981',
+                                  fontSize: '0.7rem',
+                                  fontWeight: 600,
+                                  border: '1px solid rgba(16,185,129,0.2)'
+                                }}>
+                                  ✉ Respondido
+                                </span>
+                              );
+                            }
+                            return (
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                background: 'var(--color-bg-hover)',
+                                color: 'var(--color-text-secondary)',
+                                fontSize: '0.7rem',
+                                fontWeight: 600,
+                                border: '1px solid var(--color-border)'
+                              }}>
+                                ✉ Sem Resposta
+                              </span>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -909,10 +1218,99 @@ export default function Leads() {
                         </span>
                       </>
                     )}
+                    <span>•</span>
+                    {(() => {
+                      const isReplied = emailStatuses[selectedLead.id]?.respondido;
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            padding: '4px 12px',
+                            borderRadius: '4px',
+                            background: isReplied ? 'rgba(16,185,129,0.1)' : 'var(--color-bg-hover)',
+                            color: isReplied ? '#10b981' : 'var(--color-text-secondary)',
+                            fontSize: '0.8rem',
+                            fontWeight: 700,
+                            border: isReplied ? '1px solid rgba(16,185,129,0.2)' : '1px solid var(--color-border)'
+                          }}>
+                            ✉ {isReplied ? 'Respondido via E-mail' : 'Pendente de Resposta'}
+                          </span>
+                          <button
+                            onClick={() => updateEmailStatus(selectedLead.id, !isReplied)}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--color-accent)',
+                              fontSize: '0.78rem',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              padding: '2px 6px',
+                              textDecoration: 'underline'
+                            }}
+                          >
+                            {isReplied ? 'Marcar como Pendente' : 'Marcar como Respondido'}
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                  <button
+                    id="btn-ver-conversa"
+                    onClick={() => setShowChatModal(true)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '10px 18px',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'var(--color-bg-card)',
+                      color: 'var(--color-text-secondary)',
+                      border: '1px solid var(--color-border)',
+                      fontWeight: 700,
+                      fontSize: '0.88rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      flexShrink: 0
+                    }}
+                    onMouseOver={e => e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'}
+                    onMouseOut={e => e.currentTarget.style.backgroundColor = 'var(--color-bg-card)'}
+                  >
+                    <MessageSquare size={16} /> Ver conversa detalhada
+                  </button>
+
+                  {responsibleEmails && (
+                    <button
+                      id="btn-encaminhar-direto"
+                      onClick={() => handleForwardDirect(responsibleEmails)}
+                      disabled={sendingForward}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '10px 18px',
+                        borderRadius: 'var(--radius-md)',
+                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                        color: '#fff',
+                        border: 'none',
+                        fontWeight: 700,
+                        fontSize: '0.88rem',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        boxShadow: '0 2px 8px rgba(16,185,129,0.25)',
+                        flexShrink: 0
+                      }}
+                      onMouseOver={e => e.currentTarget.style.filter = 'brightness(1.1)'}
+                      onMouseOut={e => e.currentTarget.style.filter = 'none'}
+                    >
+                      <Send size={16} /> Encaminhar p/ Responsável
+                    </button>
+                  )}
+
                   <button
                     id="btn-encaminhar-lead"
                     onClick={() => { setShowForwardModal(true); setForwardStep('input'); }}
@@ -1638,6 +2036,109 @@ export default function Leads() {
                 </div>
               </>
             )}
+
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Visualização da Conversa do WhatsApp */}
+      {showChatModal && selectedLead && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px', backdropFilter: 'blur(4px)' }}>
+          <div style={{ background: 'var(--color-bg-card)', borderRadius: 'var(--radius-xl, 16px)', boxShadow: '0 24px 64px rgba(0,0,0,0.3)', width: '100%', maxWidth: '700px', height: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'slideDown 0.2s ease-out' }}>
+            
+            {/* Header */}
+            <div style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--color-border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700 }}>
+                  {selectedLead.nome ? selectedLead.nome.substring(0, 2).toUpperCase() : 'LD'}
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--color-text-primary)', margin: 0 }}>
+                    {selectedLead.nome || 'Lead Anônimo'}
+                  </h3>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--color-text-tertiary)', margin: 0 }}>
+                    WhatsApp: {selectedLead.telefone || 'Sem número'}
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowChatModal(false)} 
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '4px' }}
+              >
+                <XCircle size={24} />
+              </button>
+            </div>
+
+            {/* Conversation Content Area */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '24px', background: 'var(--color-bg-inner)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {loadingChat ? (
+                <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)', fontSize: '0.9rem' }}>
+                  Carregando mensagens da conversa...
+                </div>
+              ) : formattedChatMessages.length === 0 ? (
+                <div style={{ display: 'flex', flex: 1, alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-tertiary)', fontSize: '0.9rem', fontStyle: 'italic' }}>
+                  Nenhuma mensagem de conversa encontrada para este lead.
+                </div>
+              ) : (
+                formattedChatMessages.map((msg, index) => {
+                  const isSentByLead = msg.cssColor === 'sent';
+                  return (
+                    <div 
+                      key={msg.id || index} 
+                      style={{ 
+                        alignSelf: isSentByLead ? 'flex-end' : 'flex-start', 
+                        maxWidth: '80%',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: isSentByLead ? 'flex-end' : 'flex-start'
+                      }}
+                    >
+                      <div 
+                        style={{ 
+                          padding: '12px 16px',
+                          borderRadius: '12px',
+                          borderTopRightRadius: isSentByLead ? '0' : '12px',
+                          borderTopLeftRadius: isSentByLead ? '12px' : '0',
+                          backgroundColor: isSentByLead ? 'var(--color-bg-card)' : 'var(--color-accent)',
+                          color: isSentByLead ? 'var(--color-text-primary)' : 'white',
+                          border: isSentByLead ? '1px solid var(--color-border)' : 'none',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                          fontSize: '0.9rem',
+                          lineHeight: '1.4'
+                        }}
+                        dangerouslySetInnerHTML={{ __html: msg.html }}
+                      />
+                      <div style={{ 
+                        marginTop: '4px',
+                        fontSize: '0.72rem', 
+                        color: 'var(--color-text-tertiary)',
+                        display: 'flex',
+                        gap: '6px',
+                        justifyContent: isSentByLead ? 'flex-end' : 'flex-start'
+                      }}>
+                        <span style={{ fontWeight: 600 }}>
+                          {msg.sender === 'Helena' ? '🤖 Helena IA' : `🙎‍♂️ ${selectedLead.nome || 'Lead'}`}
+                        </span>
+                        <span>·</span>
+                        <span>
+                          {new Date(msg.date).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute:'2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid var(--color-border)' }}>
+              <button
+                onClick={() => setShowChatModal(false)}
+                style={{ padding: '10px 20px', borderRadius: 'var(--radius-md)', background: 'var(--color-accent)', color: '#fff', border: 'none', fontWeight: 700, fontSize: '0.9rem', cursor: 'pointer' }}
+              >
+                Fechar Conversa
+              </button>
+            </div>
 
           </div>
         </div>
