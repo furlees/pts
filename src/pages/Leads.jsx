@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { useLeadsData } from '../hooks/useHelenaData';
 import { useAuth } from '../contexts/AuthContext';
 import { updateLeadAcuracia, updateTicketStatus, fetchMessagesForPhone, updateLeadFields } from '../services/helenaService';
-import { Calendar, Search, Download, UserCircle, Building, Briefcase, Mail, Phone, ArrowRight, AlignLeft, User, CheckCircle, XCircle, RotateCcw, Ticket, Clock, Pencil, History, Send, MessageSquare } from 'lucide-react';
+import { Calendar, Search, Download, UserCircle, Building, Briefcase, Mail, Phone, ArrowRight, AlignLeft, User, CheckCircle, XCircle, RotateCcw, Ticket, Clock, Pencil, History, Send, MessageSquare, MessageCircle, PhoneCall, Check, AlertCircle, RefreshCw } from 'lucide-react';
 import { db } from '../services/firebase';
 import { collection, addDoc, getDocs, query, where, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
@@ -106,33 +106,153 @@ export default function Leads() {
 
   const AREAS_LIST = useMemo(() => (areas || []).map(a => a.name), [areas]);
 
-  // Real-time email response statuses for leads
+  // Real-time contact response statuses for leads (E-mail, WhatsApp, Telefone, Presencial, etc.)
+  const [responseStatuses, setResponseStatuses] = useState({});
+  // Fallback compatibility with previous lead_email_status collection
   const [emailStatuses, setEmailStatuses] = useState({});
 
   useEffect(() => {
     if (!db) return;
-    const unsubscribe = onSnapshot(collection(db, 'lead_email_status'), (snapshot) => {
+    const unsubResp = onSnapshot(collection(db, 'lead_response_status'), (snapshot) => {
+      const statuses = {};
+      snapshot.docs.forEach(docDoc => {
+        statuses[docDoc.id] = docDoc.data();
+      });
+      setResponseStatuses(statuses);
+    });
+    const unsubEmail = onSnapshot(collection(db, 'lead_email_status'), (snapshot) => {
       const statuses = {};
       snapshot.docs.forEach(docDoc => {
         statuses[docDoc.id] = docDoc.data();
       });
       setEmailStatuses(statuses);
     });
-    return () => unsubscribe();
+    return () => {
+      unsubResp();
+      unsubEmail();
+    };
   }, []);
 
-  const updateEmailStatus = async (leadId, respondido) => {
+  // Real-time forwarding statuses for all leads (derived from lead_forwards)
+  const [forwardStatuses, setForwardStatuses] = useState({});
+
+  useEffect(() => {
     if (!db) return;
-    try {
-      await setDoc(doc(db, 'lead_email_status', String(leadId)), {
-        leadId,
-        respondido,
-        dataResposta: respondido ? new Date().toISOString() : null,
-        respondidoPor: respondido ? (user?.name || 'Sistema') : null
+    const unsubForwards = onSnapshot(collection(db, 'lead_forwards'), (snapshot) => {
+      const statuses = {};
+      snapshot.docs.forEach(docSnap => {
+        const d = docSnap.data();
+        if (d.leadId) {
+          const id = String(d.leadId);
+          const existing = statuses[id];
+          if (!existing || new Date(d.dataEnvio) > new Date(existing.dataEnvio)) {
+            statuses[id] = {
+              encaminhado: true,
+              destinatarios: d.destinatarios,
+              dataEnvio: d.dataEnvio,
+              remetenteNome: d.remetenteNome
+            };
+          }
+        }
       });
-    } catch (err) {
-      console.error("Erro ao atualizar status de e-mail:", err);
+      setForwardStatuses(statuses);
+    });
+    return () => unsubForwards();
+  }, []);
+
+  // Helper to obtain the accurate contact response status
+  const getResponseStatus = (leadId) => {
+    if (!leadId) return null;
+    const id = String(leadId);
+    if (responseStatuses[id] !== undefined) {
+      return responseStatuses[id];
     }
+    if (emailStatuses[id] !== undefined) {
+      return emailStatuses[id];
+    }
+    return null;
+  };
+
+  // Save or update contact response
+  const saveContactResponse = async (leadId, { respondido, canal = 'email', observacao = '', dataResposta = new Date().toISOString() }) => {
+    if (!db || !leadId) return;
+    try {
+      const payload = {
+        leadId: String(leadId),
+        respondido: !!respondido,
+        canal: respondido ? canal : null,
+        observacao: respondido ? (observacao || '').trim() : null,
+        dataResposta: respondido ? dataResposta : null,
+        respondidoPor: respondido ? (user?.name || 'Sistema') : null,
+        respondidoPorEmail: respondido ? (user?.email || '') : null,
+        atualizadoEm: new Date().toISOString()
+      };
+      await setDoc(doc(db, 'lead_response_status', String(leadId)), payload);
+      // Sincroniza com lead_email_status para retrocompatibilidade
+      await setDoc(doc(db, 'lead_email_status', String(leadId)), {
+        leadId: String(leadId),
+        respondido: !!respondido,
+        canal: payload.canal,
+        observacao: payload.observacao,
+        dataResposta: payload.dataResposta,
+        respondidoPor: payload.respondidoPor
+      });
+      return { success: true };
+    } catch (err) {
+      console.error("Erro ao salvar status de resposta ao contato:", err);
+      alert("Erro ao salvar status de resposta: " + (err.message || err));
+      return { success: false, error: err };
+    }
+  };
+
+  // State for Response Modal
+  const [showResponseModal, setShowResponseModal] = useState(false);
+  const [responseForm, setResponseForm] = useState({
+    canal: 'email',
+    dataResposta: new Date().toISOString().slice(0, 16),
+    observacao: '',
+    respondido: true
+  });
+  const [savingResponse, setSavingResponse] = useState(false);
+
+  const handleOpenResponseModal = (lead) => {
+    const targetLead = lead || selectedLead;
+    if (!targetLead) return;
+    const current = getResponseStatus(targetLead.id);
+    const defaultCanal = targetLead.email ? 'email' : (targetLead.telefone ? 'whatsapp' : 'email');
+    setResponseForm({
+      canal: current?.canal || defaultCanal,
+      dataResposta: current?.dataResposta 
+        ? new Date(current.dataResposta).toISOString().slice(0, 16)
+        : new Date().toISOString().slice(0, 16),
+      observacao: current?.observacao || '',
+      respondido: current?.respondido !== undefined ? current.respondido : true
+    });
+    setShowResponseModal(true);
+  };
+
+  // Legacy Cleanup: allow resetting leads marked as 'respondido' solely by the old forward bug
+  const handleResetOldForwardedStatuses = async () => {
+    const suspectLeads = leadsList.filter(l => {
+      const resp = getResponseStatus(l.id);
+      return resp?.respondido && !resp?.canal;
+    });
+
+    if (suspectLeads.length === 0) {
+      alert("Nenhum lead com marcação legada/automática antiga encontrado. Todos os registros atuais já possuem canal de contato ou estão pendentes!");
+      return;
+    }
+
+    if (!window.confirm(`Foram identificados ${suspectLeads.length} leads marcados como 'Respondidos' pelo antigo sistema ao encaminhar, sem registro real de resposta ao cliente.\n\nDeseja redefini-los para 'Sem Resposta ao Contato'?`)) {
+      return;
+    }
+
+    let count = 0;
+    for (const lead of suspectLeads) {
+      await saveContactResponse(lead.id, { respondido: false });
+      count++;
+    }
+    alert(`Sucesso! ${count} leads foram redefinidos para 'Sem Resposta ao Contato'.`);
   };
 
   // Load editing/auditing history for the selected lead
@@ -574,7 +694,7 @@ export default function Leads() {
 
       if (db) {
         await addDoc(collection(db, 'lead_forwards'), logData);
-        await updateEmailStatus(selectedLead.id, true);
+        // Encaminhamento interno registrado com sucesso (sem marcar contato como respondido)
       }
 
       // 2. Compose mailto link and open it
@@ -724,7 +844,7 @@ export default function Leads() {
 
       if (db) {
         await addDoc(collection(db, 'lead_forwards'), logData);
-        await updateEmailStatus(selectedLead.id, true);
+        // Encaminhamento direto registrado com sucesso (sem marcar contato como respondido)
       }
 
       // 2. Compose mailto link and open it
@@ -841,12 +961,50 @@ export default function Leads() {
     }
   }, [location.search, leadsList]);
 
-  // Filter local by search text and user area if not admin
+  const [responseFilter, setResponseFilter] = useState('all'); // 'all' | 'sem_resposta' | 'respondido' | 'encaminhado' | 'nao_encaminhado'
+
+  // Counters for response & forwarding indicators
+  const kpiStats = useMemo(() => {
+    let total = leadsList.length;
+    let respondidos = 0;
+    let semResposta = 0;
+    let encaminhados = 0;
+    let naoEncaminhados = 0;
+
+    leadsList.forEach(lead => {
+      const resp = getResponseStatus(lead.id);
+      if (resp?.respondido) {
+        respondidos++;
+      } else {
+        semResposta++;
+      }
+      if (forwardStatuses[String(lead.id)]?.encaminhado) {
+        encaminhados++;
+      } else {
+        naoEncaminhados++;
+      }
+    });
+
+    const taxaResposta = total > 0 ? ((respondidos / total) * 100).toFixed(1) : '0';
+
+    return { total, respondidos, semResposta, encaminhados, naoEncaminhados, taxaResposta };
+  }, [leadsList, responseStatuses, emailStatuses, forwardStatuses]);
+
+  // Filter local by search text, user area, and response/forwarding status
   const filteredLeads = leadsList.filter(lead => {
     if (!isAdmin && userArea) {
       const userAreas = userArea.split(',').map(a => a.trim()).filter(Boolean);
       if (!userAreas.includes(lead.departamento)) return false;
     }
+
+    const resp = getResponseStatus(lead.id);
+    const isReplied = !!resp?.respondido;
+    const isForwarded = !!forwardStatuses[String(lead.id)]?.encaminhado;
+
+    if (responseFilter === 'sem_resposta' && isReplied) return false;
+    if (responseFilter === 'respondido' && !isReplied) return false;
+    if (responseFilter === 'encaminhado' && !isForwarded) return false;
+    if (responseFilter === 'nao_encaminhado' && isForwarded) return false;
     
     if (!searchTerm) return true;
     const searchLower = searchTerm.toLowerCase();
@@ -972,7 +1130,28 @@ export default function Leads() {
     }
 
     // Cabecalhos do CSV
-    const headers = ['Data', 'Nome', 'Telefone', 'Email', 'Empresa', 'Cargo', 'Departamento', 'Motivo', 'Resumo', 'Avaliação (Correta?)', 'Depto Correto'];
+    const headers = [
+      'Data de Entrada',
+      'Nome',
+      'Telefone',
+      'Email',
+      'Empresa',
+      'Cargo',
+      'Departamento',
+      'Motivo',
+      'Resumo',
+      'Status Ticket',
+      'Encaminhado Internamente',
+      'Destinatários do Encaminhamento',
+      'Data de Encaminhamento',
+      'Respondido ao Contato',
+      'Canal de Resposta',
+      'Data da Resposta',
+      'Respondido Por',
+      'Observação da Resposta',
+      'Avaliação IA (Correta?)',
+      'Depto Correto'
+    ];
     
     // Tratamento de escape de aspas e quebras de linha em cada célula
     const escapeCsv = (str) => {
@@ -981,11 +1160,23 @@ export default function Leads() {
       return `"${s}"`; // envolve em aspas
     };
 
+    const canalLabels = {
+      email: 'E-mail',
+      whatsapp: 'WhatsApp',
+      telefone: 'Telefone',
+      reuniao: 'Presencial / Reunião',
+      outro: 'Outro'
+    };
+
     const csvContent = [
       headers.join(';'), // Usando Ponto e Virgula pro Excel BR
       ...filteredLeads.map(lead => {
         const rating = lead.transferencia_correta === true ? 'Sim' : (lead.transferencia_correta === false ? 'Não' : 'N/A');
-        
+        const ts = getTicketStatus(lead);
+        const ticketLabel = !ts ? 'Pendente' : (ts.status === 'concluido' ? 'Concluído' : 'Não Concluído');
+        const fwd = forwardStatuses[String(lead.id)];
+        const resp = getResponseStatus(lead.id);
+
         return [
           new Date(lead.created_at).toLocaleString('pt-BR'),
           lead.nome || '',
@@ -996,6 +1187,15 @@ export default function Leads() {
           lead.departamento || '',
           lead.motivo || '',
           lead.resumo || '',
+          ticketLabel,
+          fwd?.encaminhado ? 'Sim' : 'Não',
+          fwd?.destinatarios || '',
+          fwd?.dataEnvio ? new Date(fwd.dataEnvio).toLocaleString('pt-BR') : '',
+          resp?.respondido ? 'Sim' : 'Não',
+          resp?.canal ? (canalLabels[resp.canal] || resp.canal) : '',
+          resp?.dataResposta ? new Date(resp.dataResposta).toLocaleString('pt-BR') : '',
+          resp?.respondidoPor || '',
+          resp?.observacao || '',
           rating,
           lead.departamento_correto || ''
         ].map(escapeCsv).join(';');
@@ -1057,14 +1257,115 @@ export default function Leads() {
           <button onClick={refetch} style={{ color: 'var(--color-accent)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, marginLeft: '8px' }}>
             Atualizar
           </button>
+          {isAdmin && (
+            <button
+              onClick={handleResetOldForwardedStatuses}
+              title="Identifica e corrige leads que ficaram marcados como 'Respondidos' pelo sistema antigo de encaminhamento sem ter confirmação de contato real."
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: 'transparent',
+                border: '1px dashed var(--color-border)',
+                color: 'var(--color-text-tertiary)',
+                fontSize: '0.75rem',
+                padding: '5px 10px',
+                borderRadius: 'var(--radius-md)',
+                cursor: 'pointer',
+                marginLeft: '4px'
+              }}
+            >
+              <RefreshCw size={12} /> Saneamento Legado
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Indicadores Reais de Atendimento & Despacho */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '10px' }}>
+        <div 
+          onClick={() => setResponseFilter('all')}
+          style={{ 
+            background: 'var(--color-bg-card)', 
+            padding: '10px 14px', 
+            borderRadius: 'var(--radius-lg)', 
+            border: responseFilter === 'all' ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            boxShadow: 'var(--shadow-sm)'
+          }}
+        >
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total de Leads</div>
+          <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--color-text-primary)', marginTop: '2px' }}>{kpiStats.total}</div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginTop: '1px' }}>no período selecionado</div>
+        </div>
+
+        <div 
+          onClick={() => setResponseFilter('sem_resposta')}
+          style={{ 
+            background: responseFilter === 'sem_resposta' ? 'rgba(239,68,68,0.08)' : 'var(--color-bg-card)', 
+            padding: '10px 14px', 
+            borderRadius: 'var(--radius-lg)', 
+            border: responseFilter === 'sem_resposta' ? '2px solid #ef4444' : '1px solid var(--color-border)',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            boxShadow: 'var(--shadow-sm)'
+          }}
+        >
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Clock size={13} /> Sem Resposta ao Contato
+          </div>
+          <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#ef4444', marginTop: '2px' }}>{kpiStats.semResposta}</div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginTop: '1px' }}>aguardando retorno</div>
+        </div>
+
+        <div 
+          onClick={() => setResponseFilter('respondido')}
+          style={{ 
+            background: responseFilter === 'respondido' ? 'rgba(16,185,129,0.08)' : 'var(--color-bg-card)', 
+            padding: '10px 14px', 
+            borderRadius: 'var(--radius-lg)', 
+            border: responseFilter === 'respondido' ? '2px solid #10b981' : '1px solid var(--color-border)',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            boxShadow: 'var(--shadow-sm)'
+          }}
+        >
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <CheckCircle size={13} /> Respondidos ao Contato
+          </div>
+          <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#10b981', marginTop: '2px', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+            <span>{kpiStats.respondidos}</span>
+            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: '#10b981' }}>({kpiStats.taxaResposta}%)</span>
+          </div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginTop: '1px' }}>atendimento registrado</div>
+        </div>
+
+        <div 
+          onClick={() => setResponseFilter('encaminhado')}
+          style={{ 
+            background: responseFilter === 'encaminhado' ? 'rgba(59,130,246,0.08)' : 'var(--color-bg-card)', 
+            padding: '10px 14px', 
+            borderRadius: 'var(--radius-lg)', 
+            border: responseFilter === 'encaminhado' ? '2px solid #3b82f6' : '1px solid var(--color-border)',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease',
+            boxShadow: 'var(--shadow-sm)'
+          }}
+        >
+          <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <Send size={13} /> Encaminhados p/ Áreas
+          </div>
+          <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#3b82f6', marginTop: '2px' }}>{kpiStats.encaminhados}</div>
+          <div style={{ fontSize: '0.7rem', color: 'var(--color-text-secondary)', marginTop: '1px' }}>despacho interno</div>
         </div>
       </div>
 
       {/* Container Principal: Split View */}
-      <div style={{ display: 'flex', flexDirection: 'row', gap: '16px', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'row', gap: '14px', flex: 1, minHeight: 0 }}>
         
         {/* Painel da Esquerda: Lista de Leads */}
-        <div className="panel" style={{ width: '380px', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+        <div className="panel" style={{ width: '320px', minWidth: '280px', maxWidth: '340px', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
           <div className="panel-header" style={{ padding: '16px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Leads Extraídos ({filteredLeads.length})</h3>
             <button 
@@ -1075,6 +1376,37 @@ export default function Leads() {
               <Download size={14} style={{ marginRight: '6px' }} />
               CSV
             </button>
+          </div>
+
+          {/* Abas Rápidas de Filtragem */}
+          <div style={{ padding: '8px 16px 12px', display: 'flex', gap: '6px', flexWrap: 'wrap', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-card)' }}>
+            {[
+              { id: 'all', label: `Todos (${kpiStats.total})` },
+              { id: 'sem_resposta', label: `⏳ Sem Resposta (${kpiStats.semResposta})`, activeColor: '#ef4444' },
+              { id: 'respondido', label: `✅ Respondidos (${kpiStats.respondidos})`, activeColor: '#10b981' },
+              { id: 'encaminhado', label: `📤 Encaminhados (${kpiStats.encaminhados})`, activeColor: '#3b82f6' },
+            ].map(tab => {
+              const active = responseFilter === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setResponseFilter(tab.id)}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: '20px',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    border: active ? `1px solid ${tab.activeColor || 'var(--color-accent)'}` : '1px solid var(--color-border)',
+                    background: active ? (tab.activeColor ? `${tab.activeColor}15` : 'var(--color-bg-hover)') : 'transparent',
+                    color: active ? (tab.activeColor || 'var(--color-accent)') : 'var(--color-text-secondary)',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
           
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
@@ -1143,8 +1475,46 @@ export default function Leads() {
                             if (ts.status === 'nao_concluido') return <span className="ticket-badge nao-concluido">✕ Não Concluído</span>;
                             return null;
                           })()}
+                          {/* Badge de Encaminhamento Interno */}
                           {(() => {
-                            const isReplied = emailStatuses[lead.id]?.respondido;
+                            const fwd = forwardStatuses[String(lead.id)];
+                            if (fwd?.encaminhado) {
+                              return (
+                                <span 
+                                  title={`Encaminhado para: ${fwd.destinatarios || 'área'}`}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px',
+                                    padding: '2px 7px',
+                                    borderRadius: '4px',
+                                    background: 'rgba(59,130,246,0.1)',
+                                    color: '#2563eb',
+                                    fontSize: '0.68rem',
+                                    fontWeight: 700,
+                                    border: '1px solid rgba(59,130,246,0.25)'
+                                  }}
+                                >
+                                  📤 Encaminhado
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+
+                          {/* Badge de Resposta ao Contato */}
+                          {(() => {
+                            const resp = getResponseStatus(lead.id);
+                            const isReplied = !!resp?.respondido;
+                            const canalIcons = {
+                              email: '✉',
+                              whatsapp: '💬',
+                              telefone: '📞',
+                              reuniao: '🤝',
+                              outro: '📌'
+                            };
+                            const icon = (resp?.canal && canalIcons[resp.canal]) || '✓';
+
                             if (isReplied) {
                               return (
                                 <span style={{
@@ -1156,10 +1526,10 @@ export default function Leads() {
                                   background: 'rgba(16,185,129,0.1)',
                                   color: '#10b981',
                                   fontSize: '0.7rem',
-                                  fontWeight: 600,
-                                  border: '1px solid rgba(16,185,129,0.2)'
+                                  fontWeight: 700,
+                                  border: '1px solid rgba(16,185,129,0.25)'
                                 }}>
-                                  ✉ Respondido
+                                  {icon} Respondido
                                 </span>
                               );
                             }
@@ -1170,13 +1540,13 @@ export default function Leads() {
                                 gap: '4px',
                                 padding: '2px 8px',
                                 borderRadius: '4px',
-                                background: 'var(--color-bg-hover)',
-                                color: 'var(--color-text-secondary)',
+                                background: 'rgba(239,68,68,0.08)',
+                                color: '#ef4444',
                                 fontSize: '0.7rem',
-                                fontWeight: 600,
-                                border: '1px solid var(--color-border)'
+                                fontWeight: 700,
+                                border: '1px solid rgba(239,68,68,0.2)'
                               }}>
-                                ✉ Sem Resposta
+                                ⏳ Sem Resposta
                               </span>
                             );
                           })()}
@@ -1200,87 +1570,149 @@ export default function Leads() {
               <p style={{ fontSize: '1rem' }}>Selecione um lead na lista para visualizar todos os detalhes.</p>
             </div>
           ) : (
-            <div style={{ flex: 1, overflowY: 'auto', padding: '32px' }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
               
-              {/* Header do Detalhe */}
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '32px', paddingBottom: '24px', borderBottom: '1px solid var(--color-border)', gap: '16px' }}>
-                <div>
-                  <h2 style={{ fontSize: '1.8rem', fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: '8px' }}>
+              {/* Header do Detalhe - Totalmente Responsivo */}
+              <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid var(--color-border)' }}>
+                {/* Linha 1: Nome do Lead */}
+                <div style={{ marginBottom: '8px' }}>
+                  <h2 style={{ fontSize: '1.45rem', fontWeight: 800, color: 'var(--color-text-primary)', margin: 0, lineHeight: 1.25, wordBreak: 'break-word' }}>
                     {selectedLead.nome || 'Lead Anônimo'}
                   </h2>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center', color: 'var(--color-text-tertiary)', flexWrap: 'wrap' }}>
-                    <span>Entrou em: {new Date(selectedLead.created_at).toLocaleString('pt-BR')}</span>
-                    {selectedLead.departamento && (
-                      <>
-                        <span>•</span>
-                        <span style={{ background: 'var(--color-warning)', color: '#000', padding: '4px 12px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 700 }}>
-                          {selectedLead.departamento}
-                        </span>
-                      </>
-                    )}
-                    <span>•</span>
-                    {(() => {
-                      const isReplied = emailStatuses[selectedLead.id]?.respondido;
+                </div>
+
+                {/* Linha 2: Badges e Metadados (em linha flexível contínua) */}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', fontSize: '0.8rem', color: 'var(--color-text-tertiary)' }}>
+                  <span>Entrou em: {new Date(selectedLead.created_at).toLocaleString('pt-BR')}</span>
+                  
+                  {selectedLead.departamento && (
+                    <span style={{ background: 'var(--color-warning)', color: '#000', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 700 }}>
+                      {selectedLead.departamento}
+                    </span>
+                  )}
+
+                  {/* Status de Encaminhamento */}
+                  {(() => {
+                    const fwd = forwardStatuses[String(selectedLead.id)];
+                    if (fwd?.encaminhado) {
                       return (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{
+                        <span 
+                          title={`Destinatários: ${fwd.destinatarios || 'área'}`}
+                          style={{
                             display: 'inline-flex',
                             alignItems: 'center',
                             gap: '4px',
-                            padding: '4px 12px',
+                            padding: '2px 8px',
                             borderRadius: '4px',
-                            background: isReplied ? 'rgba(16,185,129,0.1)' : 'var(--color-bg-hover)',
-                            color: isReplied ? '#10b981' : 'var(--color-text-secondary)',
-                            fontSize: '0.8rem',
+                            background: 'rgba(59,130,246,0.1)',
+                            color: '#2563eb',
+                            fontSize: '0.75rem',
                             fontWeight: 700,
-                            border: isReplied ? '1px solid rgba(16,185,129,0.2)' : '1px solid var(--color-border)'
-                          }}>
-                            ✉ {isReplied ? 'Respondido via E-mail' : 'Pendente de Resposta'}
-                          </span>
-                          <button
-                            onClick={() => updateEmailStatus(selectedLead.id, !isReplied)}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              color: 'var(--color-accent)',
-                              fontSize: '0.78rem',
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              padding: '2px 6px',
-                              textDecoration: 'underline'
-                            }}
-                          >
-                            {isReplied ? 'Marcar como Pendente' : 'Marcar como Respondido'}
-                          </button>
-                        </div>
+                            border: '1px solid rgba(59,130,246,0.25)'
+                          }}
+                        >
+                          📤 Encaminhado p/ Área
+                        </span>
                       );
-                    })()}
-                  </div>
+                    }
+                    return (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        background: 'var(--color-bg-hover)',
+                        color: 'var(--color-text-secondary)',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        border: '1px solid var(--color-border)'
+                      }}>
+                        📤 Não Encaminhado
+                      </span>
+                    );
+                  })()}
+
+                  {/* Status de Resposta ao Contato */}
+                  {(() => {
+                    const resp = getResponseStatus(selectedLead.id);
+                    const isReplied = !!resp?.respondido;
+                    const canalMap = {
+                      email: 'E-mail',
+                      whatsapp: 'WhatsApp',
+                      telefone: 'Ligação',
+                      reuniao: 'Presencial',
+                      outro: 'Outro'
+                    };
+                    const canalStr = resp?.canal ? (canalMap[resp.canal] || resp.canal) : 'E-mail';
+
+                    return (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '2px 8px',
+                        borderRadius: '4px',
+                        background: isReplied ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.08)',
+                        color: isReplied ? '#10b981' : '#ef4444',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        border: isReplied ? '1px solid rgba(16,185,129,0.25)' : '1px solid rgba(239,68,68,0.25)'
+                      }}>
+                        {isReplied ? `✓ Respondido (${canalStr})` : '⏳ Sem Resposta ao Contato'}
+                      </span>
+                    );
+                  })()}
                 </div>
 
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                {/* Linha 3: Barra de Ações do Lead (Ação de Toolbar adaptável) */}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--color-border)' }}>
+                  <button
+                    id="btn-registrar-resposta-header"
+                    onClick={() => handleOpenResponseModal(selectedLead)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '7px 14px',
+                      borderRadius: 'var(--radius-md)',
+                      background: getResponseStatus(selectedLead.id)?.respondido 
+                        ? 'var(--color-bg-hover)' 
+                        : 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                      color: getResponseStatus(selectedLead.id)?.respondido ? 'var(--color-text-secondary)' : '#fff',
+                      border: getResponseStatus(selectedLead.id)?.respondido ? '1px solid var(--color-border)' : 'none',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                      boxShadow: getResponseStatus(selectedLead.id)?.respondido ? 'none' : '0 2px 6px rgba(16,185,129,0.25)'
+                    }}
+                  >
+                    <CheckCircle size={15} /> 
+                    {getResponseStatus(selectedLead.id)?.respondido ? 'Alterar Resposta' : 'Registrar Resposta'}
+                  </button>
+
                   <button
                     id="btn-ver-conversa"
                     onClick={() => setShowChatModal(true)}
                     style={{
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '8px',
-                      padding: '10px 18px',
+                      gap: '6px',
+                      padding: '7px 14px',
                       borderRadius: 'var(--radius-md)',
                       background: 'var(--color-bg-card)',
                       color: 'var(--color-text-secondary)',
                       border: '1px solid var(--color-border)',
-                      fontWeight: 700,
-                      fontSize: '0.88rem',
+                      fontWeight: 600,
+                      fontSize: '0.82rem',
                       cursor: 'pointer',
-                      transition: 'all 0.2s',
-                      flexShrink: 0
+                      transition: 'all 0.15s ease'
                     }}
                     onMouseOver={e => e.currentTarget.style.backgroundColor = 'var(--color-bg-hover)'}
                     onMouseOut={e => e.currentTarget.style.backgroundColor = 'var(--color-bg-card)'}
                   >
-                    <MessageSquare size={16} /> Ver conversa detalhada
+                    <MessageSquare size={15} /> Ver conversa
                   </button>
 
                   {responsibleEmails && (
@@ -1289,25 +1721,24 @@ export default function Leads() {
                       onClick={() => handleForwardDirect(responsibleEmails)}
                       disabled={sendingForward}
                       style={{
-                        display: 'flex',
+                        display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '8px',
-                        padding: '10px 18px',
+                        gap: '6px',
+                        padding: '7px 14px',
                         borderRadius: 'var(--radius-md)',
                         background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
                         color: '#fff',
                         border: 'none',
                         fontWeight: 700,
-                        fontSize: '0.88rem',
+                        fontSize: '0.82rem',
                         cursor: 'pointer',
-                        transition: 'all 0.2s',
-                        boxShadow: '0 2px 8px rgba(16,185,129,0.25)',
-                        flexShrink: 0
+                        transition: 'all 0.15s ease',
+                        boxShadow: '0 2px 6px rgba(16,185,129,0.25)'
                       }}
                       onMouseOver={e => e.currentTarget.style.filter = 'brightness(1.1)'}
                       onMouseOut={e => e.currentTarget.style.filter = 'none'}
                     >
-                      <Send size={16} /> Encaminhar p/ Responsável
+                      <Send size={15} /> Encaminhar p/ Responsável
                     </button>
                   )}
 
@@ -1315,49 +1746,59 @@ export default function Leads() {
                     id="btn-encaminhar-lead"
                     onClick={() => { setShowForwardModal(true); setForwardStep('input'); }}
                     style={{
-                      display: 'flex',
+                      display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '8px',
-                      padding: '10px 18px',
+                      gap: '6px',
+                      padding: '7px 14px',
                       borderRadius: 'var(--radius-md)',
                       background: 'var(--color-accent)',
                       color: '#fff',
                       border: 'none',
                       fontWeight: 700,
-                      fontSize: '0.88rem',
+                      fontSize: '0.82rem',
                       cursor: 'pointer',
-                      transition: 'all 0.2s',
-                      flexShrink: 0
+                      transition: 'all 0.15s ease'
                     }}
                     onMouseOver={e => e.currentTarget.style.filter = 'brightness(1.1)'}
                     onMouseOut={e => e.currentTarget.style.filter = 'none'}
                   >
-                    <Mail size={16} /> Encaminhar Lead
+                    <Mail size={15} /> Encaminhar Lead
                   </button>
 
                   {isAdmin && !isEditingLead && (
                     <button
                       id="btn-editar-ficha-lead"
-                      onClick={() => setIsEditingLead(true)}
+                      onClick={() => {
+                        setIsEditingLead(true);
+                        setEditForm({
+                          nome: selectedLead.nome || '',
+                          empresa: selectedLead.empresa || '',
+                          telefone: selectedLead.telefone || '',
+                          email: selectedLead.email || '',
+                          cargo: selectedLead.cargo || '',
+                          departamento: selectedLead.departamento || '',
+                          motivo: selectedLead.motivo || '',
+                          resumo: selectedLead.resumo || ''
+                        });
+                      }}
                       style={{
-                        display: 'flex',
+                        display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '8px',
-                        padding: '10px 18px',
+                        gap: '6px',
+                        padding: '7px 14px',
                         borderRadius: 'var(--radius-md)',
+                        background: 'transparent',
                         border: '1px solid var(--color-border)',
-                        background: 'var(--color-bg-card)',
                         color: 'var(--color-text-secondary)',
-                        fontWeight: 700,
-                        fontSize: '0.88rem',
+                        fontWeight: 600,
+                        fontSize: '0.82rem',
                         cursor: 'pointer',
-                        transition: 'all 0.2s',
-                        flexShrink: 0
+                        transition: 'all 0.15s ease'
                       }}
                       onMouseOver={e => { e.currentTarget.style.borderColor = 'var(--color-accent)'; e.currentTarget.style.color = 'var(--color-accent)'; }}
                       onMouseOut={e => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
                     >
-                      <Pencil size={16} /> Editar Ficha
+                      <Pencil size={15} /> Editar Ficha
                     </button>
                   )}
                 </div>
@@ -1761,6 +2202,137 @@ export default function Leads() {
                 })()}
               </div>
 
+              {/* Card de Atendimento / Resposta ao Contato */}
+              <div style={{ marginTop: '24px', background: 'var(--color-bg-hover)', borderRadius: 'var(--radius-lg)', padding: '24px', border: '1px solid var(--color-border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, color: 'var(--color-text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <MessageCircle size={18} color="var(--color-accent)" /> Atendimento ao Contato (Retorno ao Lead)
+                    </h4>
+                    <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--color-text-tertiary)' }}>
+                      Controle real se este contato recebido via Helena já foi atendido por alguém da equipe.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleOpenResponseModal(selectedLead)}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'var(--color-accent)',
+                      color: '#fff',
+                      border: 'none',
+                      fontSize: '0.82rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
+                  >
+                    <CheckCircle size={14} />
+                    {getResponseStatus(selectedLead.id)?.respondido ? 'Editar Registro de Resposta' : 'Registrar Resposta Agora'}
+                  </button>
+                </div>
+
+                {(() => {
+                  const resp = getResponseStatus(selectedLead.id);
+                  if (resp?.respondido) {
+                    const canalLabels = {
+                      email: 'E-mail',
+                      whatsapp: 'WhatsApp',
+                      telefone: 'Ligação Telefônica',
+                      reuniao: 'Presencial / Reunião',
+                      outro: 'Outro Canal'
+                    };
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: 'var(--color-bg-card)', padding: '16px 20px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(16,185,129,0.3)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '4px 12px',
+                            borderRadius: '4px',
+                            background: 'rgba(16,185,129,0.15)',
+                            color: '#10b981',
+                            fontWeight: 700,
+                            fontSize: '0.85rem'
+                          }}>
+                            ✓ Respondido via {canalLabels[resp.canal] || resp.canal || 'E-mail'}
+                          </span>
+                          {resp.dataResposta && (
+                            <span style={{ fontSize: '0.8rem', color: 'var(--color-text-tertiary)' }}>
+                              Em: {new Date(resp.dataResposta).toLocaleString('pt-BR')}
+                            </span>
+                          )}
+                        </div>
+
+                        {resp.respondidoPor && (
+                          <div style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)' }}>
+                            <strong>Atendente responsável:</strong> {resp.respondidoPor} {resp.respondidoPorEmail ? `(${resp.respondidoPorEmail})` : ''}
+                          </div>
+                        )}
+
+                        {resp.observacao && (
+                          <div style={{ background: 'var(--color-bg-hover)', padding: '12px 14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)', fontSize: '0.85rem', color: 'var(--color-text-primary)' }}>
+                            <strong style={{ display: 'block', marginBottom: '4px', color: 'var(--color-text-secondary)', fontSize: '0.75rem', textTransform: 'uppercase' }}>Observações do Atendimento:</strong>
+                            {resp.observacao}
+                          </div>
+                        )}
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+                          <button
+                            onClick={async () => {
+                              if (window.confirm("Deseja desmarcar a resposta deste lead e marcá-lo como 'Sem Resposta ao Contato'?")) {
+                                await saveContactResponse(selectedLead.id, { respondido: false });
+                              }
+                            }}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--color-error)',
+                              fontSize: '0.78rem',
+                              cursor: 'pointer',
+                              textDecoration: 'underline'
+                            }}
+                          >
+                            Desmarcar resposta (voltar para Sem Resposta)
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: 'rgba(239,68,68,0.05)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(239,68,68,0.2)', flexWrap: 'wrap', gap: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <Clock size={20} color="#ef4444" />
+                        <div>
+                          <div style={{ fontSize: '0.88rem', fontWeight: 700, color: '#ef4444' }}>Aguardando Retorno ao Cliente</div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--color-text-secondary)' }}>Este contato ainda não possui registro de retorno por e-mail, WhatsApp ou telefone.</div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleOpenResponseModal(selectedLead)}
+                        style={{
+                          padding: '8px 16px',
+                          borderRadius: 'var(--radius-md)',
+                          background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                          color: '#fff',
+                          border: 'none',
+                          fontSize: '0.82rem',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          boxShadow: '0 2px 6px rgba(16,185,129,0.3)'
+                        }}
+                      >
+                        Registrar Resposta Agora
+                      </button>
+                    </div>
+                  );
+                })()}
+              </div>
+
               {/* Histórico de Alterações (Auditoria) */}
               {isAdmin && (
                 <div style={{ marginTop: '40px', paddingTop: '32px', borderTop: '1px solid var(--color-border)' }}>
@@ -1856,6 +2428,179 @@ export default function Leads() {
         </div>
 
       </div>
+
+      {/* Modal de Registro de Resposta ao Contato */}
+      {showResponseModal && selectedLead && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px', backdropFilter: 'blur(4px)' }}>
+          <div style={{ background: 'var(--color-bg-card)', borderRadius: 'var(--radius-xl, 16px)', boxShadow: '0 24px 64px rgba(0,0,0,0.3)', width: '100%', maxWidth: '540px', overflow: 'hidden', animation: 'slideDown 0.2s ease-out', border: '1px solid var(--color-border)' }}>
+            
+            {/* Modal Header */}
+            <div style={{ padding: '24px 28px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--color-border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '42px', height: '42px', borderRadius: 'var(--radius-md)', background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+                  <CheckCircle size={22} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text-primary)', margin: 0 }}>Registrar Resposta ao Contato</h3>
+                  <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)', margin: '2px 0 0 0' }}>Confirme o retorno real concedido a este lead</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setShowResponseModal(false)} 
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '4px' }}
+              >
+                <XCircle size={20} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+              {/* Card Resumo do Lead */}
+              <div style={{ background: 'var(--color-bg-hover)', padding: '14px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', fontSize: '0.85rem' }}>
+                <div style={{ fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: '4px', fontSize: '0.95rem' }}>
+                  {selectedLead.nome || 'Lead Anônimo'}
+                </div>
+                <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', color: 'var(--color-text-secondary)', fontSize: '0.8rem' }}>
+                  {selectedLead.email && <span>✉ {selectedLead.email}</span>}
+                  {selectedLead.telefone && <span>💬 {selectedLead.telefone}</span>}
+                  {selectedLead.empresa && <span>🏢 {selectedLead.empresa}</span>}
+                </div>
+              </div>
+
+              {/* Canal de Resposta */}
+              <div>
+                <label style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Canal Utilizado para Responder *
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+                  {[
+                    { id: 'email', label: 'E-mail', icon: '✉' },
+                    { id: 'whatsapp', label: 'WhatsApp', icon: '💬' },
+                    { id: 'telefone', label: 'Ligação', icon: '📞' },
+                    { id: 'reuniao', label: 'Presencial', icon: '🤝' },
+                    { id: 'outro', label: 'Outro', icon: '📌' }
+                  ].map(c => {
+                    const isSelected = responseForm.canal === c.id;
+                    return (
+                      <button
+                        type="button"
+                        key={c.id}
+                        onClick={() => setResponseForm(p => ({ ...p, canal: c.id }))}
+                        style={{
+                          padding: '10px 8px',
+                          borderRadius: 'var(--radius-md)',
+                          border: isSelected ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
+                          background: isSelected ? 'rgba(59,130,246,0.08)' : 'var(--color-bg-card)',
+                          color: isSelected ? 'var(--color-accent)' : 'var(--color-text-primary)',
+                          fontWeight: isSelected ? 700 : 500,
+                          fontSize: '0.82rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <span>{c.icon}</span> {c.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Data e Hora */}
+              <div>
+                <label style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Data e Hora do Atendimento *
+                </label>
+                <input
+                  type="datetime-local"
+                  value={responseForm.dataResposta}
+                  onChange={e => setResponseForm(p => ({ ...p, dataResposta: e.target.value }))}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              {/* Observação / Detalhes */}
+              <div>
+                <label style={{ fontSize: '0.76rem', fontWeight: 700, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Observações / Resumo da Resposta (Opcional)
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="Ex.: Enviado e-mail com informações do edital de inovação e tiradas as dúvidas sobre os requisitos..."
+                  value={responseForm.observacao}
+                  onChange={e => setResponseForm(p => ({ ...p, observacao: e.target.value }))}
+                  style={{ width: '100%', padding: '10px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-input)', color: 'var(--color-text-primary)', fontSize: '0.85rem', outline: 'none', resize: 'vertical', boxSizing: 'border-box' }}
+                />
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{ padding: '16px 28px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--color-border)', background: 'var(--color-bg-card)' }}>
+              <div>
+                {getResponseStatus(selectedLead.id)?.respondido && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (window.confirm("Desmarcar a resposta deste lead e marcá-lo como 'Sem Resposta ao Contato'?")) {
+                        setSavingResponse(true);
+                        await saveContactResponse(selectedLead.id, { respondido: false });
+                        setSavingResponse(false);
+                        setShowResponseModal(false);
+                      }
+                    }}
+                    style={{ background: 'transparent', border: 'none', color: 'var(--color-error)', fontSize: '0.8rem', cursor: 'pointer', textDecoration: 'underline' }}
+                  >
+                    Marcar como Sem Resposta
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowResponseModal(false)}
+                  style={{ padding: '10px 18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={savingResponse}
+                  onClick={async () => {
+                    setSavingResponse(true);
+                    const res = await saveContactResponse(selectedLead.id, {
+                      respondido: true,
+                      canal: responseForm.canal,
+                      dataResposta: responseForm.dataResposta ? new Date(responseForm.dataResposta).toISOString() : new Date().toISOString(),
+                      observacao: responseForm.observacao
+                    });
+                    setSavingResponse(false);
+                    if (res?.success) {
+                      setShowResponseModal(false);
+                    }
+                  }}
+                  style={{
+                    padding: '10px 22px',
+                    borderRadius: 'var(--radius-md)',
+                    border: 'none',
+                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                    color: '#fff',
+                    fontSize: '0.88rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 8px rgba(16,185,129,0.25)'
+                  }}
+                >
+                  {savingResponse ? 'Salvando...' : 'Salvar Resposta ao Contato'}
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* Modal de Encaminhamento por E-mail */}
       {showForwardModal && (

@@ -44,7 +44,7 @@
   --radius-xl: 20px;
   --radius-full: 9999px;
 
-  --sidebar-width: 270px;
+  --sidebar-width: 240px;
   --sidebar-collapsed-width: 80px;
   --header-height: 64px;
 
@@ -408,7 +408,16 @@ img {
 .page-content {
   flex: 1;
   overflow-y: auto;
-  padding: 28px 32px;
+  padding: 20px 24px;
+}
+
+@media (max-width: 1366px) {
+  :root {
+    --sidebar-width: 220px;
+  }
+  .page-content {
+    padding: 16px 18px;
+  }
 }
 
 /* ===== CARDS ===== */
