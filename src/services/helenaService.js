@@ -17,14 +17,23 @@ function applyDateFilter(query, dateColumn, startDate, endDate) {
 // =============================================
 // ATUALIZAÇÃO DE ACURÁCIA DO LEAD
 // =============================================
-export async function updateLeadAcuracia(leadId, isCorrect, correctDepartment = null) {
+export async function updateLeadAcuracia(leadId, isCorrect, correctDepartment = null, redirectDepartment = null) {
   try {
+    const updatePayload = {
+      transferencia_correta: isCorrect,
+      departamento_correto: isCorrect === false ? correctDepartment : null
+    };
+
+    // Redireciona o departamento do lead automaticamente para a nova área quando corrigido
+    if (redirectDepartment) {
+      updatePayload.departamento = redirectDepartment;
+    } else if (isCorrect === false && correctDepartment) {
+      updatePayload.departamento = correctDepartment;
+    }
+
     const { data, error } = await supabase
       .from('dados_pts')
-      .update({
-        transferencia_correta: isCorrect,
-        departamento_correto: correctDepartment
-      })
+      .update(updatePayload)
       .eq('id', leadId)
       .select(); // Exige o retorno para validar
     
@@ -33,7 +42,7 @@ export async function updateLeadAcuracia(leadId, isCorrect, correctDepartment = 
       throw new Error("Permissão Negada: Nenhuma linha foi atualizada. O 'Row Level Security (RLS)' do seu Supabase está bloqueando a edição na tabela dados_pts.");
     }
     
-    return { error: null, success: true };
+    return { error: null, success: true, data: data[0] };
   } catch (err) {
     console.error('[HelenaService] Erro ao atualizar acurácia:', err);
     return { error: err.message || 'Erro ao atualizar.', success: false };

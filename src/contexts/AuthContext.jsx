@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { db, auth, firebaseConfig } from '../services/firebase';
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import {
   collection,
   doc,
@@ -8,7 +8,8 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
-  onSnapshot
+  onSnapshot,
+  getFirestore
 } from 'firebase/firestore';
 import {
   signInWithEmailAndPassword,
@@ -46,10 +47,13 @@ const USERS_SEED = [
 const HAS_FIREBASE = !!import.meta.env.VITE_FIREBASE_PROJECT_ID;
 
 // Secondary app instance to create Firebase Auth accounts for new users without logging out current Admin
+let secondaryApp = null;
 let secondaryAuth = null;
 if (HAS_FIREBASE) {
   try {
-    const secondaryApp = initializeApp(firebaseConfig, 'secondary-auth-app');
+    const existingApps = getApps();
+    secondaryApp = existingApps.find(a => a.name === 'secondary-auth-app')
+      || initializeApp(firebaseConfig, 'secondary-auth-app');
     secondaryAuth = getAuth(secondaryApp);
   } catch (error) {
     console.error("Failed to initialize secondary app", error);
@@ -296,31 +300,76 @@ export function AuthProvider({ children }) {
   const addUser = useCallback(async (userData) => {
     if (!HAS_FIREBASE) return { success: false, message: 'Banco offline.' };
 
-    const nextId = users.length > 0 ? Math.max(...users.map(u => u.id)) + 1 : 1;
+    const nextId = users.length > 0 ? Math.max(...users.map(u => u.id || 0)) + 1 : 1;
     const cleanEmail = userData.email.trim().toLowerCase();
+
+    const newUser = {
+      id: nextId,
+      name:  userData.name.trim(),
+      email: cleanEmail,
+      role:  userData.role,
+      area:  userData.area || null,
+    };
 
     try {
       let uid = `user_${nextId}`;
-      
-      if (secondaryAuth) {
-        const userCred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, userData.password);
-        uid = userCred.user.uid;
-        await signOut(secondaryAuth);
+
+      if (secondaryAuth && secondaryApp) {
+        let userCred = null;
+        try {
+          userCred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, userData.password);
+        } catch (authErr) {
+          if (authErr.code === 'auth/email-already-in-use') {
+            // O usuário já foi criado no Firebase Auth (por exemplo na tentativa anterior).
+            // Conecta na secondaryAuth para recuperar o UID do usuário e salvar no Firestore.
+            try {
+              userCred = await signInWithEmailAndPassword(secondaryAuth, cleanEmail, userData.password);
+            } catch (loginErr) {
+              console.warn("Usuário já existe no Auth com outra senha:", loginErr);
+              return { success: false, message: 'Este e-mail já está cadastrado no sistema com outra senha.' };
+            }
+          } else if (authErr.code === 'auth/weak-password') {
+            return { success: false, message: 'A senha deve ter no mínimo 6 caracteres.' };
+          } else if (authErr.code === 'auth/invalid-email') {
+            return { success: false, message: 'O formato do e-mail é inválido.' };
+          } else {
+            console.error("Firebase Auth error:", authErr);
+            return { success: false, message: authErr.message || 'Erro ao cadastrar usuário no Firebase Auth.' };
+          }
+        }
+
+        if (userCred && userCred.user) {
+          uid = userCred.user.uid;
+
+          // 1. Grava no Firestore através da instância secondaryDb enquanto o usuário ainda está autenticado nela.
+          // Isso atende à regra de segurança `request.auth.uid == userId`.
+          try {
+            const secondaryDb = getFirestore(secondaryApp);
+            await setDoc(doc(secondaryDb, 'users', uid), newUser);
+          } catch (secDbErr) {
+            console.warn("Tentativa de escrita via secondaryDb falhou, tentando db principal:", secDbErr);
+            // 2. Fallback via db principal autenticado como Admin
+            await setDoc(doc(db, 'users', uid), newUser);
+          }
+
+          // 3. Desloga o usuário recém-criado da instância secundária
+          await signOut(secondaryAuth);
+        }
+      } else {
+        // Fallback caso secondaryAuth não esteja disponível
+        await setDoc(doc(db, 'users', uid), newUser);
       }
 
-      const newUser = {
-        id: nextId,
-        name:     userData.name.trim(),
-        email:    cleanEmail,
-        role:     userData.role,
-        area:     userData.area || null,
-      };
-
-      await setDoc(doc(db, 'users', uid), newUser);
       return { success: true };
     } catch (error) {
       console.error("Firebase error in addUser:", error);
-      return { success: false, message: 'Erro ao cadastrar usuário no Firebase Auth.' };
+      const isPermissionDenied = error.code === 'permission-denied' || error.message?.includes('permission');
+      return { 
+        success: false, 
+        message: isPermissionDenied 
+          ? 'Permissão negada no Firestore ao salvar o perfil do usuário.' 
+          : (error.message || 'Erro ao cadastrar usuário.') 
+      };
     }
   }, [users]);
 

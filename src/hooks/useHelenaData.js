@@ -136,8 +136,10 @@ export function useLeadsData(dateRange = { startDate: null, endDate: null }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async (isSilent = false) => {
+    if (!isSilent) {
+      setLoading(true);
+    }
     setError(null);
 
     try {
@@ -152,16 +154,18 @@ export function useLeadsData(dateRange = { startDate: null, endDate: null }) {
       console.error('[useLeadsData] Erro:', err);
       setError(err.message || 'Erro desconhecido');
     } finally {
-      setLoading(false);
+      if (!isSilent) {
+        setLoading(false);
+      }
     }
   }, [dateRange.startDate, dateRange.endDate]);
 
   useEffect(() => {
-    fetchData();
+    fetchData(false);
   }, [fetchData]);
 
-  const refetch = useCallback(() => {
-    fetchData();
+  const refetch = useCallback((isSilent = false) => {
+    return fetchData(isSilent);
   }, [fetchData]);
 
   return { leadsList, loading, error, refetch };

@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useLeadsData } from '../hooks/useHelenaData';
 import { useAuth } from '../contexts/AuthContext';
-import { updateLeadAcuracia, updateTicketStatus, fetchMessagesForPhone, updateLeadFields } from '../services/helenaService';
-import { Calendar, Search, Download, UserCircle, Building, Briefcase, Mail, Phone, ArrowRight, AlignLeft, User, CheckCircle, XCircle, RotateCcw, Ticket, Clock, Pencil, History, Send, MessageSquare, MessageCircle, PhoneCall, Check, AlertCircle, RefreshCw } from 'lucide-react';
+import { updateLeadAcuracia, fetchMessagesForPhone, updateLeadFields } from '../services/helenaService';
+import { Calendar, Search, Download, UserCircle, Building, Briefcase, Mail, Phone, ArrowRight, AlignLeft, User, CheckCircle, XCircle, RotateCcw, Clock, Pencil, History, Send, MessageSquare, MessageCircle, PhoneCall, Check, AlertCircle, RefreshCw } from 'lucide-react';
 import { db } from '../services/firebase';
 import { collection, addDoc, getDocs, query, where, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
@@ -96,6 +96,10 @@ export default function Leads() {
   const [dateRange, setDateRange] = useState({ startDate: '', endDate: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLeadId, setSelectedLeadId] = useState(null);
+  const listContainerRef = useRef(null);
+  const detailsContainerRef = useRef(null);
+  const lastScrollTopRef = useRef(0);
+  const processedUrlIdRef = useRef(null);
 
   const processedDateRange = {
     startDate: dateRange.startDate ? new Date(dateRange.startDate).toISOString() : null,
@@ -158,6 +162,21 @@ export default function Leads() {
       setForwardStatuses(statuses);
     });
     return () => unsubForwards();
+  }, []);
+
+  // Rastreamento em tempo real do histórico de triagem da IA e direcionamento de leads
+  const [leadTriagens, setLeadTriagens] = useState({});
+
+  useEffect(() => {
+    if (!db) return;
+    const unsubTriagens = onSnapshot(collection(db, 'lead_triagens'), (snapshot) => {
+      const map = {};
+      snapshot.docs.forEach(docSnap => {
+        map[docSnap.id] = docSnap.data();
+      });
+      setLeadTriagens(map);
+    });
+    return () => unsubTriagens();
   }, []);
 
   // Helper to obtain the accurate contact response status
@@ -310,6 +329,9 @@ export default function Leads() {
     } else {
       setIsEditingLead(false);
     }
+    setEditingAcuraciaLeadId(null);
+    setActiveTabAcuracia(null);
+    setSelectedCorrectDept('');
   }, [selectedLeadId, leadsList]);
 
   const handleSaveLeadEdits = async () => {
@@ -358,7 +380,7 @@ export default function Leads() {
       // Update local history
       setEditHistory(prev => [{ id: `local_edit_${Date.now()}`, ...auditLog }, ...prev]);
 
-      await refetch();
+      await refetch(true);
       setIsEditingLead(false);
     } catch (err) {
       console.error("Erro ao salvar alterações no lead:", err);
@@ -509,6 +531,14 @@ export default function Leads() {
     const incorrectBody = `A triagem da Helena para o lead ${selectedLead.nome || 'Anônimo'} atribuído a ${selectedLead.departamento || 'Sem área'} foi INCORRETA.\n\nO departamento correto deveria ser: [Digite o setor correto aqui]\n`;
     const incorrectMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(incorrectSubj)}&body=${encodeURIComponent(incorrectBody)}`;
 
+    const finalizeConcluidoSubj = `[Finalização de Atendimento] Ticket #${selectedLead.id} - Concluído`;
+    const finalizeConcluidoBody = `Olá,\n\nConfirmo que o atendimento do Ticket #${selectedLead.id} (Lead: ${selectedLead.nome || 'Anônimo'} - Área: ${selectedLead.departamento || 'Sem área'}) foi CONCLUÍDO com sucesso.\n\nObservações adicionais (opcional):\n`;
+    const finalizeConcluidoMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(finalizeConcluidoSubj)}&body=${encodeURIComponent(finalizeConcluidoBody)}`;
+
+    const finalizeNaoConcluidoSubj = `[Finalização de Atendimento] Ticket #${selectedLead.id} - Não Concluído`;
+    const finalizeNaoConcluidoBody = `Olá,\n\nInformo que o atendimento do Ticket #${selectedLead.id} (Lead: ${selectedLead.nome || 'Anônimo'} - Área: ${selectedLead.departamento || 'Sem área'}) NÃO FOI CONCLUÍDO.\n\nMotivo/Justificativa:\n[Informe aqui o motivo da não conclusão]\n`;
+    const finalizeNaoConcluidoMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(finalizeNaoConcluidoSubj)}&body=${encodeURIComponent(finalizeNaoConcluidoBody)}`;
+
     let chatHtml = '';
     if (includeChatHistory && chatMessages && chatMessages.length > 0) {
       const messagesList = chatMessages.map(msg => {
@@ -626,16 +656,31 @@ export default function Leads() {
             <!-- Chat messages -->
             ${chatHtml}
 
-            <!-- Evaluation Card -->
-            <div style="margin-top: 32px; padding: 24px; background: #f0f4f9; border-radius: 12px; border: 1px solid #d3e3fd; text-align: center;">
-              <h4 style="margin: 0 0 6px 0; font-size: 14px; color: #0b57d0; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Avaliação de Acurácia</h4>
-              <p style="margin: 0 0 18px 0; font-size: 12px; color: #5f6368; line-height: 1.4;">Clique em uma das opções abaixo para relatar o resultado da triagem diretamente por e-mail:</p>
+            <!-- Finalização do Atendimento -->
+            <div style="margin-top: 28px; padding: 22px; background: #f0fdf4; border-radius: 12px; border: 1px solid #bbf7d0; text-align: center;">
+              <h4 style="margin: 0 0 6px 0; font-size: 14px; color: #166534; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Finalização do Atendimento</h4>
+              <p style="margin: 0 0 16px 0; font-size: 12px; color: #374151; line-height: 1.4;">Após atender este lead, confirme a conclusão do atendimento diretamente por e-mail:</p>
               
               <div style="display: inline-block;">
-                <a href="${correctMailto}" style="display: inline-block; padding: 10px 20px; color: #ffffff; background-color: #137333; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 12px; margin: 4px 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
+                <a href="${finalizeConcluidoMailto}" style="display: inline-block; padding: 10px 22px; color: #ffffff; background-color: #10b981; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 12px; margin: 4px 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
+                  ✓ Atendimento Concluído
+                </a>
+                <a href="${finalizeNaoConcluidoMailto}" style="display: inline-block; padding: 10px 22px; color: #ffffff; background-color: #ef4444; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 12px; margin: 4px 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
+                  ✕ Não Concluído
+                </a>
+              </div>
+            </div>
+
+            <!-- Evaluation Card -->
+            <div style="margin-top: 16px; padding: 22px; background: #f0f4f9; border-radius: 12px; border: 1px solid #d3e3fd; text-align: center;">
+              <h4 style="margin: 0 0 6px 0; font-size: 14px; color: #0b57d0; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Avaliação de Acurácia</h4>
+              <p style="margin: 0 0 16px 0; font-size: 12px; color: #5f6368; line-height: 1.4;">Clique em uma das opções abaixo para relatar o resultado da triagem diretamente por e-mail:</p>
+              
+              <div style="display: inline-block;">
+                <a href="${correctMailto}" style="display: inline-block; padding: 10px 20px; color: #ffffff; background-color: #137333; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 12px; margin: 4px 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
                   ✓ Acurácia CORRETA
                 </a>
-                <a href="${incorrectMailto}" style="display: inline-block; padding: 10px 20px; color: #ffffff; background-color: #b31412; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 12px; margin: 4px 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
+                <a href="${incorrectMailto}" style="display: inline-block; padding: 10px 20px; color: #ffffff; background-color: #b31412; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 12px; margin: 4px 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.15);">
                   ✗ Acurácia INCORRETA
                 </a>
               </div>
@@ -718,8 +763,16 @@ export default function Leads() {
           `${transcript}\n\n`;
       }
 
-      // Add feedback/approval links for external managers
+      // Add feedback/approval and finalization links for external managers/agents
       const supportEmail = 'contato@agenciainova.org.br';
+      const finalizeConcluidoSubj = `[Finalização de Atendimento] Ticket #${selectedLead.id} - Concluído`;
+      const finalizeConcluidoBody = `Olá,\n\nConfirmo que o atendimento do Ticket #${selectedLead.id} (Lead: ${selectedLead.nome || 'Anônimo'} - Área: ${selectedLead.departamento || 'Sem área'}) foi CONCLUÍDO com sucesso.\n\nObservações adicionais (opcional):\n`;
+      const finalizeConcluidoMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(finalizeConcluidoSubj)}&body=${encodeURIComponent(finalizeConcluidoBody)}`;
+
+      const finalizeNaoConcluidoSubj = `[Finalização de Atendimento] Ticket #${selectedLead.id} - Não Concluído`;
+      const finalizeNaoConcluidoBody = `Olá,\n\nInformo que o atendimento do Ticket #${selectedLead.id} (Lead: ${selectedLead.nome || 'Anônimo'} - Área: ${selectedLead.departamento || 'Sem área'}) NÃO FOI CONCLUÍDO.\n\nMotivo/Justificativa:\n[Informe aqui o motivo da não conclusão]\n`;
+      const finalizeNaoConcluidoMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(finalizeNaoConcluidoSubj)}&body=${encodeURIComponent(finalizeNaoConcluidoBody)}`;
+
       const correctSubj = `Retorno Acuracia Helena - Ticket #${selectedLead.id}`;
       const correctBody = `Confirmado. A triagem da Helena para o lead ${selectedLead.nome || 'Anônimo'} atribuído a ${selectedLead.departamento || 'Sem área'} foi CORRETA.`;
       const correctMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(correctSubj)}&body=${encodeURIComponent(correctBody)}`;
@@ -729,6 +782,14 @@ export default function Leads() {
       const incorrectMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(incorrectSubj)}&body=${encodeURIComponent(incorrectBody)}`;
 
       body += `=========================================\n` +
+        `FINALIZAÇÃO DO ATENDIMENTO (Ação do Responsável):\n` +
+        `=========================================\n` +
+        `Após atender este lead, registre a conclusão clicando em uma das opções abaixo:\n\n` +
+        `👉 ATENDIMENTO CONCLUÍDO: Clique aqui para registrar a conclusão do atendimento\n` +
+        `   ${finalizeConcluidoMailto}\n\n` +
+        `👉 NÃO CONCLUÍDO: Clique aqui para relatar atendimento não concluído\n` +
+        `   ${finalizeNaoConcluidoMailto}\n\n` +
+        `=========================================\n` +
         `AVALIAÇÃO DE ACURÁCIA (Ação Externa do Gestor):\n` +
         `=========================================\n` +
         `Se você é o gestor responsável e deseja avaliar a acurácia deste atendimento diretamente pelo seu e-mail (sem precisar fazer login na plataforma), clique em uma das opções abaixo:\n\n` +
@@ -868,8 +929,16 @@ export default function Leads() {
           `${transcript}\n\n`;
       }
 
-      // Add feedback/approval links for external managers
+      // Add feedback/approval and finalization links for external managers/agents
       const supportEmail = 'contato@agenciainova.org.br';
+      const finalizeConcluidoSubj = `[Finalização de Atendimento] Ticket #${selectedLead.id} - Concluído`;
+      const finalizeConcluidoBody = `Olá,\n\nConfirmo que o atendimento do Ticket #${selectedLead.id} (Lead: ${selectedLead.nome || 'Anônimo'} - Área: ${selectedLead.departamento || 'Sem área'}) foi CONCLUÍDO com sucesso.\n\nObservações adicionais (opcional):\n`;
+      const finalizeConcluidoMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(finalizeConcluidoSubj)}&body=${encodeURIComponent(finalizeConcluidoBody)}`;
+
+      const finalizeNaoConcluidoSubj = `[Finalização de Atendimento] Ticket #${selectedLead.id} - Não Concluído`;
+      const finalizeNaoConcluidoBody = `Olá,\n\nInformo que o atendimento do Ticket #${selectedLead.id} (Lead: ${selectedLead.nome || 'Anônimo'} - Área: ${selectedLead.departamento || 'Sem área'}) NÃO FOI CONCLUÍDO.\n\nMotivo/Justificativa:\n[Informe aqui o motivo da não conclusão]\n`;
+      const finalizeNaoConcluidoMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(finalizeNaoConcluidoSubj)}&body=${encodeURIComponent(finalizeNaoConcluidoBody)}`;
+
       const correctSubj = `Retorno Acuracia Helena - Ticket #${selectedLead.id}`;
       const correctBody = `Confirmado. A triagem da Helena para o lead ${selectedLead.nome || 'Anônimo'} atribuído a ${selectedLead.departamento || 'Sem área'} foi CORRETA.`;
       const correctMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(correctSubj)}&body=${encodeURIComponent(correctBody)}`;
@@ -879,6 +948,14 @@ export default function Leads() {
       const incorrectMailto = `mailto:${supportEmail}?subject=${encodeURIComponent(incorrectSubj)}&body=${encodeURIComponent(incorrectBody)}`;
 
       body += `=========================================\n` +
+        `FINALIZAÇÃO DO ATENDIMENTO (Ação do Responsável):\n` +
+        `=========================================\n` +
+        `Após atender este lead, registre a conclusão clicando em uma das opções abaixo:\n\n` +
+        `👉 ATENDIMENTO CONCLUÍDO: Clique aqui para registrar a conclusão do atendimento\n` +
+        `   ${finalizeConcluidoMailto}\n\n` +
+        `👉 NÃO CONCLUÍDO: Clique aqui para relatar atendimento não concluído\n` +
+        `   ${finalizeNaoConcluidoMailto}\n\n` +
+        `=========================================\n` +
         `AVALIAÇÃO DE ACURÁCIA (Ação Externa do Gestor):\n` +
         `=========================================\n` +
         `Se você é o gestor responsável e deseja avaliar a acurácia deste atendimento diretamente pelo seu e-mail (sem precisar fazer login na plataforma), clique em uma das opções abaixo:\n\n` +
@@ -943,14 +1020,15 @@ export default function Leads() {
 
 
   useEffect(() => {
-    // Escuta querystring para auto-pesquisa e auto-seleção
+    // Escuta querystring para auto-pesquisa e auto-seleção inicial apenas
     const queryParams = new URLSearchParams(location.search);
     const targetId = queryParams.get('id');
     
-    if (targetId && leadsList.length > 0) {
+    if (targetId && leadsList.length > 0 && processedUrlIdRef.current !== targetId) {
       // Confirma que o ID existe na lista recebida do backend
       const found = leadsList.find(l => String(l.id) === targetId);
       if (found) {
+        processedUrlIdRef.current = targetId;
         setSelectedLeadId(found.id);
         // Scrollar na microtarefa depois que o DOM renderizar o item como Selected
         setTimeout(() => {
@@ -1022,105 +1100,184 @@ export default function Leads() {
   const [acuraciaLocal, setAcuraciaLocal] = useState({});
   const [correctDeptText, setCorrectDeptText] = useState('');
   const [activeTabAcuracia, setActiveTabAcuracia] = useState(null); // 'correct' or 'incorrect'
+  const [editingAcuraciaLeadId, setEditingAcuraciaLeadId] = useState(null);
+  const [selectedCorrectDept, setSelectedCorrectDept] = useState('');
+  const [isSavingAcuracia, setIsSavingAcuracia] = useState(false);
 
-  // Ticket state
-  const [ticketLocal, setTicketLocal] = useState({}); // { [leadId]: { status, justificativa, updated_at } }
-  const [ticketMode, setTicketMode] = useState(null); // null | 'nao_concluido'
-  const [ticketJustificativa, setTicketJustificativa] = useState('');
-  const [ticketSaving, setTicketSaving] = useState(false);
-
-  const getTicketStatus = (lead) => {
-    if (ticketLocal[lead.id]) {
-      if (ticketLocal[lead.id].editing) return null;
-      return ticketLocal[lead.id];
-    }
-    if (lead.ticket_status) return { status: lead.ticket_status, justificativa: lead.ticket_justificativa, updated_at: lead.ticket_updated_at };
-    return null;
-  };
-
-  const handleSaveTicket = async (leadId, status) => {
-    if (status === 'nao_concluido' && !ticketJustificativa.trim()) return;
-    setTicketSaving(true);
-    const justificativa = status === 'nao_concluido' ? ticketJustificativa.trim() : null;
-    const res = await updateTicketStatus(leadId, status, justificativa);
-    setTicketSaving(false);
-    if (res.error || !res.success) {
-      alert(`Erro ao salvar ticket.\n\nDetalhe: ${res.error}\n\nVerifique o RLS (Row Level Security) da tabela dados_pts no Supabase — é necessária uma política de UPDATE.`);
-      return;
-    }
-    setTicketLocal(prev => ({ ...prev, [leadId]: { status, justificativa, updated_at: new Date().toISOString() } }));
-    setTicketMode(null);
-    setTicketJustificativa('');
-    refetch();
-  };
-
-  const handleEditTicket = () => {
-    setTicketMode(null);
-    setTicketJustificativa('');
-    if (selectedLead) {
-      setTicketLocal(prev => ({ ...prev, [selectedLead.id]: { editing: true } }));
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setTicketMode(null);
-    setTicketJustificativa('');
-    if (selectedLead) {
-      setTicketLocal(prev => {
-        const n = { ...prev };
-        delete n[selectedLead.id];
-        return n;
-      });
-    }
-  };
-
-  const handleSaveAcuracia = async (leadId, isCorrect) => {
-    let dept = null;
-    if (isCorrect === true) {
-      dept = selectedLead.departamento;
-    } else if (isCorrect === false) {
-      dept = correctDeptText;
-    }
-
-    const res = await updateLeadAcuracia(leadId, isCorrect, dept);
+  // Lista estritamente das áreas cadastradas no sistema (Gestão de Usuários / Áreas)
+  const allAvailableAreas = useMemo(() => {
+    const defaultList = [
+      'Administrativo',
+      'CEFI',
+      'CET',
+      'Comercial',
+      'Comunicação',
+      'Compras',
+      'CPL',
+      'Eventos',
+      'Financeiro',
+      'Jurídico',
+      'Hubiz',
+      'Inovação e Projetos',
+      'Parcerias Estratégicas',
+      'RH',
+      'Cel40'
+    ];
     
-    // Tratamento de Erro Crítico (RLS Policy)
-    if (res.error || !res.success) {
-      console.warn("DB Update result:", res);
-      alert(`Erro Crítico Supabase!\n\nA sua classificação não foi salva no banco de dados.\nDetalhe: ${res.error}\n\nVocê precisa ir no Supabase > Table editor > dados_pts > desativar o "Row Level Security (RLS)" ou criar uma política de UPDATE.`);
-      return; // Aborta e impede a UI de fingir que salvou
-    }
+    // Utiliza apenas as áreas oficiais do sistema (areas cadastradas no painel)
+    const sourceList = (areas && areas.length > 0)
+      ? areas.map(a => a?.name).filter(Boolean)
+      : defaultList;
 
-    // Se a transferência foi sinalizada como incorreta, notifica o webhook
-    if (isCorrect === false) {
-      try {
-        await fetch('https://webhooks.nextgoal.com.br/webhook/notifica', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            leadId,
-            nome: selectedLead.nome,
-            telefone: selectedLead.telefone,
-            email: selectedLead.email,
-            empresa: selectedLead.empresa,
-            departamentoAtual: selectedLead.departamento,
-            departamentoCorreto: dept,
-            motivo: selectedLead.motivo,
-            resumo: selectedLead.resumo
-          }),
-        });
-      } catch (webhookErr) {
-        console.error('Erro ao chamar webhook de notificação:', webhookErr);
+    // Normaliza e deduplica evitando repetições e diferenças de maiúsculas/minúsculas
+    const seen = new Set();
+    const unique = [];
+    sourceList.forEach(name => {
+      const trimmed = name.trim();
+      const lower = trimmed.toLowerCase();
+      if (trimmed && !seen.has(lower)) {
+        seen.add(lower);
+        unique.push(trimmed);
       }
+    });
+
+    return unique.sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [areas]);
+
+  // Recupera com segurança o departamento original transferido pela Helena
+  const helenaOriginalDept = useMemo(() => {
+    if (!selectedLead) return '';
+    const stored = leadTriagens[String(selectedLead.id)]?.originalDepartamento;
+    if (stored) return stored;
+    return selectedLead.departamento || '';
+  }, [selectedLead, leadTriagens]);
+
+
+
+  const handleSaveAcuracia = async (leadId, isCorrect, chosenDept = null) => {
+    const targetLead = leadsList.find(l => l.id === leadId) || selectedLead;
+    if (!targetLead) return;
+
+    // Preserva o departamento original da triagem
+    const originalDept = leadTriagens[String(leadId)]?.originalDepartamento || targetLead.departamento;
+
+    let targetDept = null;
+    let redirectDept = null;
+
+    if (isCorrect === true) {
+      targetDept = null;
+      redirectDept = originalDept;
+    } else if (isCorrect === false) {
+      targetDept = (chosenDept || selectedCorrectDept || correctDeptText || '').trim();
+      redirectDept = targetDept;
+    } else if (isCorrect === null) {
+      targetDept = null;
+      redirectDept = originalDept;
     }
 
-    // Atualiza otimista na UI se passou com sucesso absoluto
-    setAcuraciaLocal(prev => ({ ...prev, [leadId]: { isCorrect, correctDeptText: dept } }));
-    setActiveTabAcuracia(null);
-    setCorrectDeptText('');
-    refetch(); // Recarrega para atualizar a métrica do dashboard
+    setIsSavingAcuracia(true);
+    try {
+      // Salva no banco de dados e realiza automaticamente o direcionamento se incorreto
+      const res = await updateLeadAcuracia(leadId, isCorrect, targetDept, redirectDept);
+      
+      // Tratamento de Erro Crítico (RLS Policy)
+      if (res.error || !res.success) {
+        console.warn("DB Update result:", res);
+        alert(`Erro Crítico Supabase!\n\nA sua classificação não foi salva no banco de dados.\nDetalhe: ${res.error}\n\nVocê precisa ir no Supabase > Table editor > dados_pts > desativar o "Row Level Security (RLS)" ou criar uma política de UPDATE.`);
+        return; // Aborta e impede a UI de fingir que salvou
+      }
+
+      // Salva no Firestore para rastreabilidade e garantia da triagem original
+      if (db) {
+        try {
+          await setDoc(doc(db, 'lead_triagens', String(leadId)), {
+            leadId,
+            originalDepartamento: originalDept,
+            ultimoDepartamento: redirectDept || originalDept,
+            transferencia_correta: isCorrect,
+            departamento_correto: targetDept,
+            atualizadoEm: new Date().toISOString(),
+            atualizadoPor: user?.name || user?.email || 'Administrador'
+          }, { merge: true });
+
+          // Se houve alteração de direcionamento, salva no histórico de auditoria
+          if (isCorrect === false && targetDept && targetLead.departamento !== targetDept) {
+            await addDoc(collection(db, 'lead_edits'), {
+              leadId: targetLead.id,
+              leadNome: targetLead.nome || 'Anônimo',
+              editorNome: user?.name || 'Administrador',
+              editorEmail: user?.email || '',
+              dataAlteracao: new Date().toISOString(),
+              alteracoes: {
+                departamento: { antes: targetLead.departamento, depois: targetDept },
+                acuracia: { antes: targetLead.transferencia_correta ? 'Correta' : 'Pendente/Incorreta', depois: `Incorreta (Redirecionado para ${targetDept})` }
+              }
+            });
+          }
+        } catch (fsErr) {
+          console.error("Erro ao registrar histórico no Firestore:", fsErr);
+        }
+      }
+
+      // Se a transferência foi sinalizada como incorreta, notifica o webhook
+      if (isCorrect === false && targetDept) {
+        try {
+          await fetch('https://webhooks.nextgoal.com.br/webhook/notifica', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              leadId,
+              nome: targetLead.nome,
+              telefone: targetLead.telefone,
+              email: targetLead.email,
+              empresa: targetLead.empresa,
+              departamentoAtual: originalDept,
+              departamentoCorreto: targetDept,
+              motivo: targetLead.motivo,
+              resumo: targetLead.resumo
+            }),
+          });
+        } catch (webhookErr) {
+          console.error('Erro ao chamar webhook de notificação:', webhookErr);
+        }
+      }
+
+      // Guarda a posição atual de scroll da listagem e dos detalhes antes de atualizar
+      const savedListScroll = listContainerRef.current ? listContainerRef.current.scrollTop : lastScrollTopRef.current;
+      const savedDetailsScroll = detailsContainerRef.current ? detailsContainerRef.current.scrollTop : 0;
+
+      // Atualiza otimista na UI se passou com sucesso absoluto
+      setAcuraciaLocal(prev => ({ ...prev, [leadId]: { isCorrect, correctDeptText: targetDept } }));
+      setActiveTabAcuracia(null);
+      setEditingAcuraciaLeadId(null);
+      setSelectedCorrectDept('');
+      setCorrectDeptText('');
+
+      await refetch(true); // Recarrega silenciosamente sem desmontar a listagem nem resetar o scroll
+
+      // Preserva exatamente a posição em que o usuário estava na listagem e na tela
+      if (listContainerRef.current && savedListScroll !== null && savedListScroll !== undefined) {
+        listContainerRef.current.scrollTop = savedListScroll;
+      }
+      if (detailsContainerRef.current && savedDetailsScroll > 0) {
+        detailsContainerRef.current.scrollTop = savedDetailsScroll;
+      }
+      requestAnimationFrame(() => {
+        if (listContainerRef.current && savedListScroll !== null && savedListScroll !== undefined) {
+          listContainerRef.current.scrollTop = savedListScroll;
+        }
+        if (detailsContainerRef.current && savedDetailsScroll > 0) {
+          detailsContainerRef.current.scrollTop = savedDetailsScroll;
+        }
+      });
+    } catch (err) {
+      console.error('Erro geral ao salvar acurácia:', err);
+      alert('Erro ao salvar acurácia: ' + (err.message || 'Tente novamente'));
+    } finally {
+      setIsSavingAcuracia(false);
+    }
   };
 
   const handleExportCSV = () => {
@@ -1172,8 +1329,7 @@ export default function Leads() {
       headers.join(';'), // Usando Ponto e Virgula pro Excel BR
       ...filteredLeads.map(lead => {
         const rating = lead.transferencia_correta === true ? 'Sim' : (lead.transferencia_correta === false ? 'Não' : 'N/A');
-        const ts = getTicketStatus(lead);
-        const ticketLabel = !ts ? 'Pendente' : (ts.status === 'concluido' ? 'Concluído' : 'Não Concluído');
+        const ticketLabel = lead.ticket_status === 'concluido' ? 'Concluído' : (lead.ticket_status === 'nao_concluido' ? 'Não Concluído' : 'Pendente');
         const fwd = forwardStatuses[String(lead.id)];
         const resp = getResponseStatus(lead.id);
 
@@ -1377,40 +1533,15 @@ export default function Leads() {
               CSV
             </button>
           </div>
-
-          {/* Abas Rápidas de Filtragem */}
-          <div style={{ padding: '8px 16px 12px', display: 'flex', gap: '6px', flexWrap: 'wrap', borderBottom: '1px solid var(--color-border)', background: 'var(--color-bg-card)' }}>
-            {[
-              { id: 'all', label: `Todos (${kpiStats.total})` },
-              { id: 'sem_resposta', label: `⏳ Sem Resposta (${kpiStats.semResposta})`, activeColor: '#ef4444' },
-              { id: 'respondido', label: `✅ Respondidos (${kpiStats.respondidos})`, activeColor: '#10b981' },
-              { id: 'encaminhado', label: `📤 Encaminhados (${kpiStats.encaminhados})`, activeColor: '#3b82f6' },
-            ].map(tab => {
-              const active = responseFilter === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setResponseFilter(tab.id)}
-                  style={{
-                    padding: '4px 10px',
-                    borderRadius: '20px',
-                    fontSize: '0.72rem',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    border: active ? `1px solid ${tab.activeColor || 'var(--color-accent)'}` : '1px solid var(--color-border)',
-                    background: active ? (tab.activeColor ? `${tab.activeColor}15` : 'var(--color-bg-hover)') : 'transparent',
-                    color: active ? (tab.activeColor || 'var(--color-accent)') : 'var(--color-text-secondary)',
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
           
-          <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-            {loading ? (
+          <div 
+            ref={listContainerRef}
+            onScroll={(e) => {
+              lastScrollTopRef.current = e.currentTarget.scrollTop;
+            }}
+            style={{ flex: 1, overflowY: 'auto', padding: '12px' }}
+          >
+            {loading && leadsList.length === 0 ? (
                <div style={{ padding: '20px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: '0.85rem' }}>Carregando dados...</div>
             ) : error ? (
               <div style={{ padding: '20px', textAlign: 'center', color: 'var(--color-error)', fontSize: '0.85rem' }}>Erro: {error}</div>
@@ -1468,13 +1599,6 @@ export default function Leads() {
                               {lead.departamento}
                             </span>
                           )}
-                          {(() => {
-                            const ts = getTicketStatus(lead);
-                            if (!ts) return <span className="ticket-badge pendente">● Pendente</span>;
-                            if (ts.status === 'concluido') return <span className="ticket-badge concluido">✓ Concluído</span>;
-                            if (ts.status === 'nao_concluido') return <span className="ticket-badge nao-concluido">✕ Não Concluído</span>;
-                            return null;
-                          })()}
                           {/* Badge de Encaminhamento Interno */}
                           {(() => {
                             const fwd = forwardStatuses[String(lead.id)];
@@ -1570,7 +1694,7 @@ export default function Leads() {
               <p style={{ fontSize: '1rem' }}>Selecione um lead na lista para visualizar todos os detalhes.</p>
             </div>
           ) : (
-            <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+            <div ref={detailsContainerRef} style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
               
               {/* Header do Detalhe - Totalmente Responsivo */}
               <div style={{ marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid var(--color-border)' }}>
@@ -2002,205 +2126,200 @@ export default function Leads() {
               )}
 
               {/* Box de Acurácia (Avaliação do Gestor) */}
-              {selectedLead.departamento && (
+              {(selectedLead.departamento || helenaOriginalDept) && (
                 <div style={{ marginTop: '40px', background: 'var(--color-bg-hover)', padding: '24px', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)' }}>
-                  <h4 style={{ fontSize: '1.05rem', color: 'var(--color-text-primary)', marginBottom: '8px', fontWeight: 700 }}>Avaliação de Acurácia da IA</h4>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', marginBottom: '8px' }}>
+                    <h4 style={{ fontSize: '1.05rem', color: 'var(--color-text-primary)', margin: 0, fontWeight: 700 }}>
+                      Avaliação de Acurácia da IA
+                    </h4>
+                    {/* Badge indicando se o lead está atualmente redirecionado */}
+                    {(selectedLead.transferencia_correta === false || acuraciaLocal[selectedLead.id]?.isCorrect === false) && (
+                      <span style={{ fontSize: '0.8rem', background: 'rgba(16, 185, 129, 0.12)', color: 'var(--color-success)', border: '1px solid rgba(16, 185, 129, 0.25)', padding: '4px 10px', borderRadius: 'var(--radius-full)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                        <Check size={13} /> Direcionamento atual: {selectedLead.departamento}
+                      </span>
+                    )}
+                  </div>
+
                   <p style={{ fontSize: '0.85rem', color: 'var(--color-text-secondary)', marginBottom: '20px' }}>
-                    A Helena transferiu este lead para <strong>{selectedLead.departamento}</strong>. O direcionamento e a qualificação foram corretos?
+                    A Helena transferiu este lead para <strong>{helenaOriginalDept || selectedLead.departamento}</strong>. O direcionamento e a qualificação foram corretos?
                   </p>
 
                   <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    
-                    {/* Botões de Ação Dinâmicos */}
-                    {acuraciaLocal[selectedLead.id]?.isCorrect === true || (selectedLead.transferencia_correta === true && acuraciaLocal[selectedLead.id]?.isCorrect !== false && acuraciaLocal[selectedLead.id]?.isCorrect !== null) ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-success)', fontWeight: 600, fontSize: '0.9rem', padding: '8px 16px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 'var(--radius-md)' }}>
-                          <CheckCircle size={18} /> Triagem classificada como Correta!
+                    {/* MODO DE EDIÇÃO / CORREÇÃO (quando clica em Refazer ou em "Não, foi incorreta") */}
+                    {(editingAcuraciaLeadId === selectedLead.id || activeTabAcuracia === 'incorrect') ? (
+                      <div style={{ background: 'var(--color-bg-inner)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', width: '100%', boxSizing: 'border-box', animation: 'fadeIn 0.25s ease' }}>
+                        <label style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--color-text-primary)', display: 'block', marginBottom: '10px' }}>
+                          Para qual área este lead deveria ter sido direcionado?
+                        </label>
+
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                          <select
+                            value={selectedCorrectDept}
+                            onChange={(e) => setSelectedCorrectDept(e.target.value)}
+                            style={{
+                              flex: 1,
+                              minWidth: '240px',
+                              maxWidth: '380px',
+                              padding: '11px 16px',
+                              borderRadius: 'var(--radius-md)',
+                              border: '1px solid var(--color-border)',
+                              background: 'var(--color-bg-input)',
+                              color: 'var(--color-text-primary)',
+                              fontSize: '0.92rem',
+                              fontWeight: 500,
+                              outline: 'none',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <option value="">-- Selecione a área correta --</option>
+                            {allAvailableAreas.map(areaName => {
+                              const isInitial = areaName.toLowerCase() === (helenaOriginalDept || selectedLead.departamento || '').toLowerCase();
+                              return (
+                                <option key={areaName} value={areaName}>
+                                  {areaName} {isInitial ? '(Atribuída inicialmente)' : ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+
+                          <button 
+                            onClick={() => handleSaveAcuracia(selectedLead.id, false, selectedCorrectDept)}
+                            disabled={!selectedCorrectDept || isSavingAcuracia}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              padding: '11px 22px',
+                              background: 'var(--color-accent)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: 'var(--radius-md)',
+                              fontWeight: 600,
+                              fontSize: '0.9rem',
+                              cursor: (!selectedCorrectDept || isSavingAcuracia) ? 'not-allowed' : 'pointer',
+                              opacity: (!selectedCorrectDept || isSavingAcuracia) ? 0.5 : 1,
+                              transition: 'opacity 0.2s'
+                            }}
+                          >
+                            {isSavingAcuracia ? 'Salvando...' : 'Confirmar e Redirecionar'}
+                          </button>
+
+                          <button 
+                            onClick={() => {
+                              setEditingAcuraciaLeadId(null);
+                              setActiveTabAcuracia(null);
+                              setSelectedCorrectDept('');
+                            }}
+                            disabled={isSavingAcuracia}
+                            style={{
+                              padding: '11px 16px',
+                              background: 'transparent',
+                              color: 'var(--color-text-tertiary)',
+                              border: '1px solid var(--color-border)',
+                              borderRadius: 'var(--radius-md)',
+                              fontWeight: 500,
+                              fontSize: '0.85rem',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Cancelar
+                          </button>
                         </div>
-                        <button onClick={() => handleSaveAcuracia(selectedLead.id, null)} style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', textDecoration: 'underline' }}>
-                          <RotateCcw size={14} /> Refazer
-                        </button>
-                      </div>
-                    ) : acuraciaLocal[selectedLead.id]?.isCorrect === false || (selectedLead.transferencia_correta === false && acuraciaLocal[selectedLead.id]?.isCorrect !== null && acuraciaLocal[selectedLead.id]?.isCorrect !== true) ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-error)', fontWeight: 600, fontSize: '0.9rem', padding: '8px 16px', background: 'rgba(239, 68, 68, 0.1)', borderRadius: 'var(--radius-md)' }}>
-                          <XCircle size={18} /> Triagem Incorreta (Deveria ser p/ {acuraciaLocal[selectedLead.id]?.correctDeptText || selectedLead.departamento_correto})
+
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--color-border)' }}>
+                          <span style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>
+                            💡 O sistema utilizará a área selecionada para realizar o direcionamento automático do lead.
+                          </span>
+                          
+                          <button
+                            onClick={() => handleSaveAcuracia(selectedLead.id, true)}
+                            disabled={isSavingAcuracia}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--color-success)',
+                              fontSize: '0.82rem',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '5px',
+                              fontWeight: 600,
+                              textDecoration: 'underline'
+                            }}
+                          >
+                            <CheckCircle size={14} /> Na verdade foi correta (Sim)
+                          </button>
                         </div>
-                        <button onClick={() => handleSaveAcuracia(selectedLead.id, null)} style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', textDecoration: 'underline' }}>
-                          <RotateCcw size={14} /> Refazer
-                        </button>
                       </div>
                     ) : (
                       <>
-                        <button 
-                          onClick={() => handleSaveAcuracia(selectedLead.id, true)}
-                          style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', background: 'var(--color-success)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'opacity 0.2s' }}
-                          onMouseOver={(e) => e.currentTarget.style.opacity = 0.8}
-                          onMouseOut={(e) => e.currentTarget.style.opacity = 1}
-                        >
-                          <CheckCircle size={18} /> Sim, foi correta
-                        </button>
+                        {/* Botões de Ação Dinâmicos */}
+                        {acuraciaLocal[selectedLead.id]?.isCorrect === true || (selectedLead.transferencia_correta === true && acuraciaLocal[selectedLead.id]?.isCorrect !== false && acuraciaLocal[selectedLead.id]?.isCorrect !== null) ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-success)', fontWeight: 600, fontSize: '0.9rem', padding: '8px 16px', background: 'rgba(16, 185, 129, 0.1)', borderRadius: 'var(--radius-md)' }}>
+                              <CheckCircle size={18} /> Triagem classificada como Correta!
+                            </div>
+                            <button 
+                              onClick={() => {
+                                setEditingAcuraciaLeadId(selectedLead.id);
+                                setActiveTabAcuracia('incorrect');
+                                setSelectedCorrectDept('');
+                              }} 
+                              style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', textDecoration: 'underline' }}
+                            >
+                              <RotateCcw size={14} /> Refazer
+                            </button>
+                          </div>
+                        ) : acuraciaLocal[selectedLead.id]?.isCorrect === false || (selectedLead.transferencia_correta === false && acuraciaLocal[selectedLead.id]?.isCorrect !== null && acuraciaLocal[selectedLead.id]?.isCorrect !== true) ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-error)', fontWeight: 600, fontSize: '0.9rem', padding: '8px 16px', background: 'rgba(239, 68, 68, 0.1)', borderRadius: 'var(--radius-md)' }}>
+                              <XCircle size={18} /> Triagem Incorreta (Deveria ser p/ {acuraciaLocal[selectedLead.id]?.correctDeptText || selectedLead.departamento_correto})
+                            </div>
+                            <button 
+                              onClick={() => {
+                                setEditingAcuraciaLeadId(selectedLead.id);
+                                setActiveTabAcuracia('incorrect');
+                                const currentDept = acuraciaLocal[selectedLead.id]?.correctDeptText || selectedLead.departamento_correto || '';
+                                const matched = allAvailableAreas.find(a => a.toLowerCase() === currentDept.toLowerCase()) || '';
+                                setSelectedCorrectDept(matched);
+                              }} 
+                              style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', textDecoration: 'underline' }}
+                            >
+                              <RotateCcw size={14} /> Refazer
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <button 
+                              onClick={() => handleSaveAcuracia(selectedLead.id, true)}
+                              disabled={isSavingAcuracia}
+                              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', background: 'var(--color-success)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'opacity 0.2s' }}
+                              onMouseOver={(e) => e.currentTarget.style.opacity = 0.8}
+                              onMouseOut={(e) => e.currentTarget.style.opacity = 1}
+                            >
+                              <CheckCircle size={18} /> Sim, foi correta
+                            </button>
 
-                        <button 
-                          onClick={() => setActiveTabAcuracia(activeTabAcuracia === 'incorrect' ? null : 'incorrect')}
-                          style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', background: 'transparent', color: 'var(--color-error)', border: '1px solid var(--color-error)', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
-                          onMouseOver={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'}
-                          onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
-                        >
-                          <XCircle size={18} /> Não, foi incorreta
-                        </button>
+                            <button 
+                              onClick={() => {
+                                setEditingAcuraciaLeadId(selectedLead.id);
+                                setActiveTabAcuracia('incorrect');
+                                setSelectedCorrectDept('');
+                              }}
+                              disabled={isSavingAcuracia}
+                              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', background: 'transparent', color: 'var(--color-error)', border: '1px solid var(--color-error)', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: 'pointer', transition: 'background 0.2s' }}
+                              onMouseOver={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'}
+                              onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                            >
+                              <XCircle size={18} /> Não, foi incorreta
+                            </button>
+                          </>
+                        )}
                       </>
-                    )}
-
-                    {/* Input se Errada */}
-                    {activeTabAcuracia === 'incorrect' && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%', marginTop: '12px', animation: 'fadeIn 0.3s ease' }}>
-                        <input 
-                          type="text" 
-                          placeholder="Para qual área deveria ter ido?"
-                          value={correctDeptText}
-                          onChange={(e) => setCorrectDeptText(e.target.value)}
-                          style={{ flex: 1, maxWidth: '300px', padding: '10px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-inner)', color: 'var(--color-text-primary)', outline: 'none' }}
-                        />
-                        <button 
-                          onClick={() => handleSaveAcuracia(selectedLead.id, false)}
-                          disabled={!correctDeptText.trim()}
-                          style={{ padding: '10px 20px', background: 'var(--color-accent)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', fontWeight: 600, cursor: correctDeptText.trim() ? 'pointer' : 'not-allowed', opacity: correctDeptText.trim() ? 1 : 0.5 }}
-                        >
-                          Salvar Correção
-                        </button>
-                      </div>
                     )}
                   </div>
                 </div>
               )}
-
-              {/* ===== SEÇÃO DE TICKET DE ATENDIMENTO ===== */}
-              <div className="ticket-section">
-                <div className="ticket-section-header">
-                  <h4 className="ticket-section-title">
-                    <Ticket size={18} color="var(--color-accent)" />
-                    Ticket de Atendimento
-                  </h4>
-                  {(() => {
-                    const ts = getTicketStatus(selectedLead);
-                    if (ts) {
-                      if (ts.status === 'concluido') return <span className="ticket-badge concluido">✓ Concluído</span>;
-                      if (ts.status === 'nao_concluido') return <span className="ticket-badge nao-concluido">✕ Não Concluído</span>;
-                    }
-                    return <span className="ticket-badge pendente">● Aguardando finalização</span>;
-                  })()}
-                </div>
-
-                {(() => {
-                  const ts = getTicketStatus(selectedLead);
-
-                  // --- STATUS JÁ DEFINIDO ---
-                  if (ts) {
-                    return (
-                      <>
-                        <div className="ticket-status-display" style={{ marginTop: '16px' }}>
-                          {ts.status === 'concluido' ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 18px', background: 'rgba(16,185,129,0.1)', borderRadius: 'var(--radius-md)', color: 'var(--color-success)', fontWeight: 600 }}>
-                              <CheckCircle size={18} />
-                              Ticket finalizado como Concluído
-                            </div>
-                          ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 18px', background: 'rgba(239,68,68,0.1)', borderRadius: 'var(--radius-md)', color: 'var(--color-error)', fontWeight: 600 }}>
-                              <XCircle size={18} />
-                              Ticket finalizado como Não Concluído
-                            </div>
-                          )}
-                          <button className="ticket-btn edit" onClick={handleEditTicket}>
-                            <Pencil size={13} /> Editar
-                          </button>
-                        </div>
-
-                        {ts.status === 'nao_concluido' && ts.justificativa && (
-                          <div className="ticket-saved-justificativa">
-                            <strong>Justificativa</strong>
-                            {ts.justificativa}
-                          </div>
-                        )}
-
-                        {ts.updated_at && (
-                          <p className="ticket-updated-at">
-                            <Clock size={11} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'middle' }} />
-                            Atualizado em: {new Date(ts.updated_at).toLocaleString('pt-BR')}
-                          </p>
-                        )}
-                      </>
-                    );
-                  }
-
-                  // --- AGUARDANDO AÇÃO ---
-                  return (
-                    <>
-                      <p className="ticket-section-subtitle">
-                        Registre o resultado final deste atendimento. A área responsável é <strong>{selectedLead.departamento || 'não definida'}</strong>.
-                      </p>
-                      <div className="ticket-actions">
-                        <button
-                          id={`ticket-concluido-${selectedLead.id}`}
-                          className="ticket-btn concluido"
-                          disabled={ticketSaving}
-                          onClick={() => handleSaveTicket(selectedLead.id, 'concluido')}
-                        >
-                          <CheckCircle size={17} />
-                          Concluído
-                        </button>
-                        <button
-                          id={`ticket-nao-concluido-${selectedLead.id}`}
-                          className="ticket-btn nao-concluido"
-                          disabled={ticketSaving}
-                          onClick={() => setTicketMode(ticketMode === 'nao_concluido' ? null : 'nao_concluido')}
-                        >
-                          <XCircle size={17} />
-                          Não Concluído
-                        </button>
-                        {selectedLead.ticket_status && (
-                          <button
-                            className="ticket-btn edit"
-                            onClick={handleCancelEdit}
-                            style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-                          >
-                            Cancelar
-                          </button>
-                        )}
-                      </div>
-
-                      {ticketMode === 'nao_concluido' && (
-                        <div className="ticket-justificativa-box">
-                          <textarea
-                            id={`ticket-justificativa-${selectedLead.id}`}
-                            placeholder="Descreva o motivo de não conclusão deste atendimento... (obrigatório)"
-                            value={ticketJustificativa}
-                            onChange={(e) => setTicketJustificativa(e.target.value)}
-                            autoFocus
-                          />
-                          <div className="ticket-justificativa-footer">
-                            <button
-                              className="ticket-btn edit"
-                              onClick={() => { setTicketMode(null); setTicketJustificativa(''); }}
-                            >
-                              Cancelar
-                            </button>
-                            <button
-                              id={`ticket-salvar-${selectedLead.id}`}
-                              className="ticket-btn concluido"
-                              style={{ background: 'var(--color-error)', opacity: ticketJustificativa.trim() ? 1 : 0.5 }}
-                              disabled={!ticketJustificativa.trim() || ticketSaving}
-                              onClick={() => handleSaveTicket(selectedLead.id, 'nao_concluido')}
-                            >
-                              {ticketSaving ? 'Salvando...' : 'Salvar Justificativa'}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
 
               {/* Card de Atendimento / Resposta ao Contato */}
               <div style={{ marginTop: '24px', background: 'var(--color-bg-hover)', borderRadius: 'var(--radius-lg)', padding: '24px', border: '1px solid var(--color-border)' }}>
