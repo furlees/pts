@@ -39,7 +39,7 @@ const USERS_SEED = [
   { id: 12, name: 'Hubiz',             email: 'hubiz@agenciainova.org.br',            password: 'Inova@2026',  role: 'User',  area: 'HUBIZ' },
   { id: 13, name: 'Cel40',             email: 'cel40@uempi.com.br',                   password: 'Inova@2026',  role: 'User',  area: 'Cel40' },
   { id: 14, name: 'Compras',           email: 'compras@agenciainova.org.br',          password: 'Inova@2026',  role: 'User',  area: 'Compras' },
-  { id: 15, name: 'Eventos',           email: 'eventos@agenciainova.org.br',          password: 'Inova@2026',  role: 'User',  area: 'Eventos e Comunicação' },
+  { id: 15, name: 'Eventos',           email: 'eventos@agenciainova.org.br',          password: 'Inova@2026',  role: 'User',  area: 'Eventos' },
   { id: 16, name: 'Juliana Mustafa',   email: 'juliana.mustafa@agenciainova.org.br',  password: 'Inova@2026',  role: 'User',  area: 'Administrativo' },
   { id: 17, name: 'Barbara Carnevale', email: 'barbara.carnevale@uempi.com.br',       password: 'Inova@2026',  role: 'User',  area: 'Jurídico' },
 ];
@@ -143,13 +143,23 @@ export function AuthProvider({ children }) {
 
         if (userSnap.exists()) {
           const userData = userSnap.data();
+          let cleanArea = userData.area;
+          if (cleanArea && cleanArea.includes('Eventos e Comunicação')) {
+            const arr = cleanArea.split(',').map(a => a.trim()).filter(a => a && a !== 'Eventos e Comunicação');
+            if (arr.length === 0) {
+              const em = (firebaseUser.email || '').toLowerCase();
+              arr.push(em.includes('comunic') ? 'Comunicação' : 'Eventos');
+            }
+            cleanArea = Array.from(new Set(arr)).join(', ') || null;
+            setDoc(userRef, { ...userData, area: cleanArea }).catch(console.error);
+          }
           const session = {
             id: userData.id,
             uid: firebaseUser.uid,
             name: userData.name,
             email: firebaseUser.email,
             role: userData.role,
-            area: userData.area
+            area: cleanArea
           };
           setUser(session);
           localStorage.setItem(STORAGE_SESSION_KEY, JSON.stringify(session));
@@ -198,10 +208,29 @@ export function AuthProvider({ children }) {
     const usersCol = collection(db, 'users');
 
     const unsubscribe = onSnapshot(usersCol, (snapshot) => {
-      let list = snapshot.docs.map(docDoc => ({ 
-        docId: docDoc.id, 
-        ...docDoc.data() 
-      }));
+      let list = snapshot.docs.map(docDoc => {
+        const data = docDoc.data();
+        let area = data.area;
+        if (area && area.includes('Eventos e Comunicação')) {
+          let arr = area.split(',').map(a => a.trim()).filter(a => a && a !== 'Eventos e Comunicação');
+          if (arr.length === 0) {
+            const em = (data.email || '').toLowerCase();
+            const nm = (data.name || '').toLowerCase();
+            arr.push((em.includes('comunic') || nm.includes('comunic')) ? 'Comunicação' : 'Eventos');
+          }
+          area = Array.from(new Set(arr)).join(', ') || null;
+
+          // Asynchronously update the document in Firestore so it's persisted permanently
+          const docRef = doc(db, 'users', docDoc.id);
+          const updateData = { ...data, area };
+          setDoc(docRef, updateData).catch(err => console.error('Error auto-migrating user area:', err));
+        }
+        return { 
+          docId: docDoc.id, 
+          ...data,
+          area
+        };
+      });
 
       // Sort by ID to preserve listing order
       list.sort((a, b) => a.id - b.id);
@@ -303,12 +332,16 @@ export function AuthProvider({ children }) {
     const nextId = users.length > 0 ? Math.max(...users.map(u => u.id || 0)) + 1 : 1;
     const cleanEmail = userData.email.trim().toLowerCase();
 
+    const cleanArea = userData.area
+      ? Array.from(new Set(userData.area.split(',').map(a => a.trim()).filter(a => a && a !== 'Eventos e Comunicação'))).join(', ') || null
+      : null;
+
     const newUser = {
       id: nextId,
       name:  userData.name.trim(),
       email: cleanEmail,
       role:  userData.role,
-      area:  userData.area || null,
+      area:  cleanArea,
     };
 
     try {
@@ -381,7 +414,17 @@ export function AuthProvider({ children }) {
     if (!fresh) return { success: false, message: 'Usuário não encontrado.' };
 
     const targetDocId = fresh.docId || docId;
-    const merged = { ...fresh, ...changes };
+    const sanitizedChanges = { ...changes };
+    if (sanitizedChanges.area !== undefined) {
+      if (sanitizedChanges.area) {
+        sanitizedChanges.area = Array.from(
+          new Set(sanitizedChanges.area.split(',').map(a => a.trim()).filter(a => a && a !== 'Eventos e Comunicação'))
+        ).join(', ') || null;
+      } else {
+        sanitizedChanges.area = null;
+      }
+    }
+    const merged = { ...fresh, ...sanitizedChanges };
 
     const dataToSave = { ...merged };
     delete dataToSave.docId;

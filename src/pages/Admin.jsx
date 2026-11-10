@@ -44,7 +44,8 @@ function AreaBadge({ area, areaColors = {} }) {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
       {areas.map(a => {
-        const color = areaColors[a] || '#64748b';
+        const isLegacy = a === 'Eventos e Comunicação';
+        const color = areaColors[a] || (isLegacy ? '#ef4444' : '#64748b');
         return (
           <span
             key={a}
@@ -56,13 +57,14 @@ function AreaBadge({ area, areaColors = {} }) {
               borderRadius: '6px',
               fontSize: '0.72rem',
               fontWeight: 700,
-              background: `${color}18`,
+              background: isLegacy ? 'rgba(239,68,68,0.1)' : `${color}18`,
               color,
-              border: `1px solid ${color}35`,
+              border: `1px solid ${isLegacy ? 'rgba(239,68,68,0.35)' : `${color}35`}`,
             }}
           >
             <Building2 size={10} />
             {a}
+            {isLegacy && <span style={{ fontSize: '0.62rem', opacity: 0.85 }}>(legada)</span>}
           </span>
         );
       })}
@@ -94,6 +96,26 @@ function MultiAreaSelector({ selectedAreas, onChange, disabled, areasList = [] }
     onChange(next);
   };
 
+  // Combine official areasList with any selected areas that are not in areasList (e.g. legacy/orphaned)
+  const displayOptions = useMemo(() => {
+    const list = [...areasList];
+    selectedAreas.forEach(a => {
+      if (a && !list.includes(a)) {
+        list.push(a);
+      }
+    });
+    return list;
+  }, [areasList, selectedAreas]);
+
+  const hasOrphaned = useMemo(() => {
+    return selectedAreas.some(a => !areasList.includes(a));
+  }, [selectedAreas, areasList]);
+
+  const handleRemoveOrphaned = (e) => {
+    e.stopPropagation();
+    onChange(selectedAreas.filter(a => areasList.includes(a)));
+  };
+
   return (
     <div ref={containerRef} style={{ position: 'relative', width: '100%', textAlign: 'left' }}>
       <button
@@ -123,6 +145,59 @@ function MultiAreaSelector({ selectedAreas, onChange, disabled, areasList = [] }
         <ChevronDown size={14} style={{ opacity: 0.7, flexShrink: 0 }} />
       </button>
 
+      {/* Selected tags with individual remove buttons */}
+      {selectedAreas.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+          {selectedAreas.map(area => {
+            const isOrphan = !areasList.includes(area);
+            return (
+              <span
+                key={area}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  background: isOrphan ? 'rgba(239,68,68,0.12)' : 'var(--color-bg-card)',
+                  color: isOrphan ? '#ef4444' : 'var(--color-text-primary)',
+                  border: isOrphan ? '1px solid rgba(239,68,68,0.35)' : '1px solid var(--color-border)',
+                }}
+              >
+                <span>{area}</span>
+                {isOrphan && (
+                  <span style={{ fontSize: '0.62rem', opacity: 0.85 }}>(legada)</span>
+                )}
+                {!disabled && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleToggle(area);
+                    }}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '0 2px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      color: isOrphan ? '#ef4444' : 'var(--color-text-secondary)',
+                      lineHeight: 1
+                    }}
+                    title={`Remover ${area}`}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {open && !disabled && (
         <div style={{
           position: 'absolute',
@@ -135,35 +210,74 @@ function MultiAreaSelector({ selectedAreas, onChange, disabled, areasList = [] }
           borderRadius: 'var(--radius-md)',
           boxShadow: 'var(--shadow-lg)',
           marginTop: '4px',
-          maxHeight: '180px',
+          maxHeight: '220px',
           overflowY: 'auto',
           padding: '8px'
         }}>
-          {areasList.map(area => {
+          {hasOrphaned && (
+            <div style={{ padding: '4px 8px 8px', borderBottom: '1px solid var(--color-border)', marginBottom: '6px' }}>
+              <button
+                type="button"
+                onClick={handleRemoveOrphaned}
+                style={{
+                  width: '100%',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  background: 'rgba(239,68,68,0.1)',
+                  border: '1px solid rgba(239,68,68,0.3)',
+                  color: '#ef4444',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  textAlign: 'center'
+                }}
+              >
+                Remover áreas inexistentes
+              </button>
+            </div>
+          )}
+
+          {displayOptions.map(area => {
             const checked = selectedAreas.includes(area);
+            const isOrphan = !areasList.includes(area);
             return (
               <label
                 key={area}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
+                  justifyContent: 'space-between',
                   gap: '8px',
                   padding: '6px 8px',
                   borderRadius: 'var(--radius-sm)',
                   fontSize: '0.8rem',
-                  color: 'var(--color-text-primary)',
+                  color: isOrphan ? '#ef4444' : 'var(--color-text-primary)',
                   cursor: 'pointer',
                   userSelect: 'none',
                   backgroundColor: checked ? 'var(--color-bg-hover)' : 'transparent'
                 }}
               >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => handleToggle(area)}
-                  style={{ cursor: 'pointer' }}
-                />
-                <span>{area}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => handleToggle(area)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <span>{area}</span>
+                </div>
+                {isOrphan && (
+                  <span style={{
+                    fontSize: '0.65rem',
+                    padding: '1px 6px',
+                    borderRadius: '4px',
+                    background: 'rgba(239,68,68,0.12)',
+                    color: '#ef4444',
+                    fontWeight: 600
+                  }}>
+                    Não cadastrada
+                  </span>
+                )}
               </label>
             );
           })}
