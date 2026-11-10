@@ -9,7 +9,6 @@ import Leads from './pages/Leads';
 import Tickets from './pages/Tickets';
 import MinhaArea from './pages/MinhaArea';
 import AdminPage from './pages/Admin';
-import ExecutivoDashboard from './pages/ExecutivoDashboard';
 import Login from './pages/Login';
 import { Bell, Search } from 'lucide-react';
 
@@ -19,7 +18,6 @@ const pageInfo = {
   '/leads': { title: 'Base de Leads', subtitle: 'Consulte os atendimentos e triagens realizadas' },
   '/tickets': { title: 'Indicadores de Sucesso', subtitle: 'Performance de finalização dos atendimentos' },
   '/minha-area': { title: 'Minha Área', subtitle: 'Gerencie os tickets da sua área' },
-  '/executivo': { title: 'Dashboard Executivo', subtitle: 'Indicadores operacionais e metas estratégicas do PTS' },
   '/admin': { title: 'Gestão de Usuários', subtitle: 'Permissões e níveis de acesso' },
   '/settings': { title: 'Configurações', subtitle: 'Gerencie suas preferências' },
 };
@@ -33,12 +31,12 @@ function AppLayout() {
 
   // Redirect role-based restrictions
   if (isViewer) {
-    const viewerPaths = ['/', '/tickets', '/executivo'];
+    const viewerPaths = ['/', '/tickets'];
     if (!viewerPaths.includes(location.pathname)) {
       return <Navigate to="/" replace />;
     }
   } else if (!isAdmin) {
-    const adminOnlyPaths = ['/', '/chat', '/tickets', '/executivo', '/admin'];
+    const adminOnlyPaths = ['/', '/chat', '/tickets', '/admin'];
     if (adminOnlyPaths.includes(location.pathname)) {
       return <Navigate to="/minha-area" replace />;
     }
@@ -72,7 +70,7 @@ function AppLayout() {
             <Route path="/leads" element={<Leads />} />
             <Route path="/tickets" element={<Tickets />} />
             <Route path="/minha-area" element={<MinhaArea />} />
-            <Route path="/executivo" element={<ExecutivoDashboard />} />
+            <Route path="/executivo" element={<Navigate to="/" replace />} />
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>

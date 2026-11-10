@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, MessageCircle, Settings, Sun, Moon, Database, LogOut, BarChart2, Building2, UserCog, LayoutGrid, Lock } from 'lucide-react';
+import { LayoutDashboard, MessageCircle, Settings, Sun, Moon, Database, LogOut, BarChart2, Building2, UserCog, Lock } from 'lucide-react';
 
 const LOGO_LIGHT = 'https://usxkmalddprlijlmoufd.supabase.co/storage/v1/object/public/imagens/logopts.jpeg';
 const LOGO_DARK  = 'https://usxkmalddprlijlmoufd.supabase.co/storage/v1/object/public/imagens/logopts1.enc';
@@ -13,7 +13,6 @@ const ADMIN_NAV = [
   { label: 'Base de Leads',      path: '/leads',     icon: Database },
   { label: 'Minha Área (Tickets)', path: '/minha-area', icon: Building2 },
   { label: 'Indicadores',        path: '/tickets',   icon: BarChart2 },
-  { label: 'Executivo',          path: '/executivo', icon: LayoutGrid },
   { label: 'Gestão de Usuários', path: '/admin',     icon: UserCog },
   { label: 'Configurações',      path: '/settings',  icon: Settings },
 ];
@@ -25,7 +24,6 @@ const AREA_NAV = [
 
 const VIEWER_NAV = [
   { label: 'Dashboard Helena',   path: '/',          icon: LayoutDashboard },
-  { label: 'Dashboard de Metas', path: '/executivo', icon: LayoutGrid },
   { label: 'Indicadores',        path: '/tickets',   icon: BarChart2 },
 ];
 
@@ -114,7 +112,7 @@ export default function Sidebar() {
         {navItems.map((item) => {
           const Icon     = item.icon;
           const isActive = location.pathname === item.path;
-          const isRestricted = isViewer && !['/', '/tickets', '/executivo'].includes(item.path);
+          const isRestricted = isViewer && !['/', '/tickets'].includes(item.path);
           return (
             <NavLink
               key={item.path}
